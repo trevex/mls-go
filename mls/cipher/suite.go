@@ -1,16 +1,20 @@
-// Package cipher implements the MLS ciphersuite registry and the labeled
-// cryptography of RFC 9420 §5. This plan covers the hash, HMAC, HKDF, and
-// signature primitives plus labeled key derivation; HPKE (EncryptWithLabel)
-// and the hybrid PQC suite are added in Plan 2.
+// Package cipher implements the MLS ciphersuite registry and the cryptography
+// of RFC 9420 §5: hash, HMAC, HKDF, signatures, labeled key derivation
+// (RefHash/ExpandWithLabel/DeriveSecret/DeriveTreeSecret/SignWithLabel), and
+// HPKE-based labeled public-key encryption (EncryptWithLabel/DecryptWithLabel,
+// §5.1.3). It registers the classical suites 0x0001 and 0x0002 plus the
+// private-use X-Wing post-quantum hybrid suite.
 package cipher
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/hkdf"
 	"crypto/hmac"
+	"crypto/hpke"
 	"crypto/sha256"
 	"hash"
 )
@@ -31,13 +35,14 @@ const (
 	SigECDSAP256
 )
 
-// Suite bundles the primitive constructors for one ciphersuite. KEM/AEAD/HPKE
-// fields are added in Plan 2; this struct intentionally exposes only what the
-// foundation needs.
+// Suite bundles the primitive constructors for one ciphersuite.
 type Suite struct {
 	ID      CipherSuite
 	NewHash func() hash.Hash
 	Sig     SignatureScheme
+	kem     hpke.KEM
+	kdf     hpke.KDF
+	aead    hpke.AEAD
 }
 
 var registry = map[CipherSuite]Suite{
@@ -45,11 +50,17 @@ var registry = map[CipherSuite]Suite{
 		ID:      X25519_AES128GCM_SHA256_Ed25519,
 		NewHash: sha256.New,
 		Sig:     SigEd25519,
+		kem:     hpke.DHKEM(ecdh.X25519()),
+		kdf:     hpke.HKDFSHA256(),
+		aead:    hpke.AES128GCM(),
 	},
 	P256_AES128GCM_SHA256_P256: {
 		ID:      P256_AES128GCM_SHA256_P256,
 		NewHash: sha256.New,
 		Sig:     SigECDSAP256,
+		kem:     hpke.DHKEM(ecdh.P256()),
+		kdf:     hpke.HKDFSHA256(),
+		aead:    hpke.AES128GCM(),
 	},
 }
 
@@ -97,6 +108,21 @@ func (s Suite) verifyClassical(pub, message, sig []byte) bool {
 	default:
 		return false
 	}
+}
+
+// GenerateHPKEKeyPair generates a fresh HPKE key pair for the suite's KEM,
+// returning the serialized private and public keys (the MLS HPKEPrivateKey /
+// HPKEPublicKey encodings).
+func (s Suite) GenerateHPKEKeyPair() (priv, pub []byte, err error) {
+	sk, err := s.kem.GenerateKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	privBytes, err := sk.Bytes()
+	if err != nil {
+		return nil, nil, err
+	}
+	return privBytes, sk.PublicKey().Bytes(), nil
 }
 
 // signClassical signs message with priv for the suite's scheme. Used by

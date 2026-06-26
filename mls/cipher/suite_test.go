@@ -33,3 +33,18 @@ func TestUnknownSuite(t *testing.T) {
 		t.Fatal("unknown suite should not resolve")
 	}
 }
+
+func TestSuiteLookupBoth(t *testing.T) {
+	for _, id := range []CipherSuite{X25519_AES128GCM_SHA256_Ed25519, P256_AES128GCM_SHA256_P256} {
+		cs, ok := Lookup(id)
+		if !ok {
+			t.Fatalf("suite %#x not registered", id)
+		}
+		if cs.HashLen() != 32 {
+			t.Fatalf("suite %#x HashLen=%d, want 32", id, cs.HashLen())
+		}
+		if cs.ID != id {
+			t.Fatalf("suite %#x has ID %#x", id, cs.ID)
+		}
+	}
+}

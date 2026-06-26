@@ -88,15 +88,10 @@ func (s Suite) verifyClassical(pub, message, sig []byte) bool {
 	case SigEd25519:
 		return len(pub) == ed25519.PublicKeySize && ed25519.Verify(ed25519.PublicKey(pub), message, sig)
 	case SigECDSAP256:
-		x, y := elliptic.UnmarshalCompressed(elliptic.P256(), pub)
-		if x == nil {
-			xx, yy := elliptic.Unmarshal(elliptic.P256(), pub)
-			if xx == nil {
-				return false
-			}
-			x, y = xx, yy
+		pk, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), pub)
+		if err != nil {
+			return false
 		}
-		pk := &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
 		digest := s.Hash(message)
 		return ecdsa.VerifyASN1(pk, digest, sig)
 	default:

@@ -3,6 +3,8 @@
 // leaves at even indices, intermediate nodes at odd indices.
 package tree
 
+import "math/bits"
+
 // NodeWidth returns the number of nodes for a tree with nLeaves leaves.
 func NodeWidth(nLeaves uint32) uint32 {
 	if nLeaves == 0 {
@@ -11,19 +13,17 @@ func NodeWidth(nLeaves uint32) uint32 {
 	return 2*(nLeaves-1) + 1
 }
 
-// log2 returns floor(log2(x)); log2(0) == 0.
+// log2 returns floor(log2(x)) for x > 0; log2(0) == 0.
 func log2(x uint32) uint32 {
 	if x == 0 {
 		return 0
 	}
-	k := uint32(0)
-	for x>>k > 0 {
-		k++
-	}
-	return k - 1
+	return uint32(bits.Len32(x)) - 1
 }
 
-// level returns the height of node x (0 for leaves).
+// level returns the level of node x: the number of trailing 1-bits in its
+// index (its height in the complete binary tree). Leaves (even indices) are
+// level 0.
 func level(x uint32) uint32 {
 	if x&1 == 0 {
 		return 0
@@ -59,7 +59,9 @@ func Right(x uint32) (uint32, bool) {
 	return x ^ (3 << (k - 1)), true
 }
 
-// parentStep computes the parent in the complete tree (ignores bounds).
+// parentStep climbs one edge in the complete (infinite) binary tree, ignoring
+// the actual tree width. It sets the level bit k and toggles bit k+1 according
+// to whether x is a left or right child.
 func parentStep(x uint32) uint32 {
 	k := level(x)
 	b := (x >> (k + 1)) & 1
@@ -69,6 +71,7 @@ func parentStep(x uint32) uint32 {
 // Parent returns the parent of x within a tree of nLeaves; ok is false if x is
 // the root. Parents that fall outside the (possibly non-full) tree are walked
 // up until they land in range.
+// x must be a valid node index: 0 <= x < NodeWidth(nLeaves).
 func Parent(x, nLeaves uint32) (uint32, bool) {
 	if x == Root(nLeaves) {
 		return 0, false
@@ -83,16 +86,16 @@ func Parent(x, nLeaves uint32) (uint32, bool) {
 
 // Sibling returns the sibling of x within a tree of nLeaves; ok is false if x
 // is the root.
+// x must be a valid node index: 0 <= x < NodeWidth(nLeaves).
 func Sibling(x, nLeaves uint32) (uint32, bool) {
 	p, ok := Parent(x, nLeaves)
 	if !ok {
 		return 0, false
 	}
-	if l, _ := Left(p); l == x {
-		return Right(p)
+	l, _ := Left(p)
+	r, _ := Right(p) // p is always internal, so both children exist
+	if l == x {
+		return r, true
 	}
-	if l, ok := Left(p); ok {
-		return l, true
-	}
-	return 0, false
+	return l, true
 }

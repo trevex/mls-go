@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
@@ -51,21 +52,24 @@ func TestTreeMathKAT(t *testing.T) {
 		t.Fatal("no tree-math vectors loaded")
 	}
 	for _, c := range cases {
-		if got := tree.NodeWidth(c.NLeaves); got != c.NNodes {
-			t.Fatalf("NodeWidth(%d)=%d, want %d", c.NLeaves, got, c.NNodes)
-		}
-		if got := tree.Root(c.NLeaves); got != c.Root {
-			t.Fatalf("Root(%d)=%d, want %d", c.NLeaves, got, c.Root)
-		}
-		for i := uint32(0); i < c.NNodes; i++ {
-			lv, lok := tree.Left(i)
-			check(t, int(i), "left", c.Left[i], lv, lok)
-			rv, rok := tree.Right(i)
-			check(t, int(i), "right", c.Right[i], rv, rok)
-			pv, pok := tree.Parent(i, c.NLeaves)
-			check(t, int(i), "parent", c.Parent[i], pv, pok)
-			sv, sok := tree.Sibling(i, c.NLeaves)
-			check(t, int(i), "sibling", c.Sibling[i], sv, sok)
-		}
+		c := c
+		t.Run(fmt.Sprintf("nLeaves=%d", c.NLeaves), func(t *testing.T) {
+			if got := tree.NodeWidth(c.NLeaves); got != c.NNodes {
+				t.Fatalf("NodeWidth(%d)=%d, want %d", c.NLeaves, got, c.NNodes)
+			}
+			if got := tree.Root(c.NLeaves); got != c.Root {
+				t.Fatalf("Root(%d)=%d, want %d", c.NLeaves, got, c.Root)
+			}
+			for i := uint32(0); i < c.NNodes; i++ {
+				lv, lok := tree.Left(i)
+				check(t, int(i), "left", c.Left[i], lv, lok)
+				rv, rok := tree.Right(i)
+				check(t, int(i), "right", c.Right[i], rv, rok)
+				pv, pok := tree.Parent(i, c.NLeaves)
+				check(t, int(i), "parent", c.Parent[i], pv, pok)
+				sv, sok := tree.Sibling(i, c.NLeaves)
+				check(t, int(i), "sibling", c.Sibling[i], sv, sok)
+			}
+		})
 	}
 }

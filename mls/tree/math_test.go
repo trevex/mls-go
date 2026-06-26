@@ -11,6 +11,20 @@ func TestNodeWidth(t *testing.T) {
 	}
 }
 
+func TestParentNonPowerOfTwo(t *testing.T) {
+	// nLeaves=5 => width 9, root 7. Node 8's naive parentStep lands out of
+	// range, so Parent must walk up to the root. Exercises the walk-up loop.
+	if p, ok := Parent(8, 5); !ok || p != 7 {
+		t.Fatalf("Parent(8,5)=(%d,%v), want (7,true)", p, ok)
+	}
+	if p, ok := Parent(6, 5); !ok || p != 5 {
+		t.Fatalf("Parent(6,5)=(%d,%v), want (5,true)", p, ok)
+	}
+	if s, ok := Sibling(8, 5); !ok || s != 3 {
+		t.Fatalf("Sibling(8,5)=(%d,%v), want (3,true)", s, ok)
+	}
+}
+
 func TestRootAndParentSmall(t *testing.T) {
 	if got := Root(4); got != 3 {
 		t.Fatalf("Root(4)=%d, want 3", got)

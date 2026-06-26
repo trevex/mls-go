@@ -46,4 +46,9 @@ func TestXWingSuiteRoundTrip(t *testing.T) {
 	if !bytes.Equal(got, plaintext) {
 		t.Fatalf("round-trip: got %q, want %q", got, plaintext)
 	}
+
+	// Wrong context must fail to decrypt (HPKE info is authenticated).
+	if _, err := cs.DecryptWithLabel(priv, label, []byte("other"), kemOut, ct); err == nil {
+		t.Fatal("X-Wing: decrypt with wrong context should fail")
+	}
 }

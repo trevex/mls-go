@@ -1,7 +1,9 @@
-// Package cipher implements the MLS ciphersuite registry and the labeled
-// cryptography of RFC 9420 §5. This plan covers the hash, HMAC, HKDF, and
-// signature primitives plus labeled key derivation; HPKE (EncryptWithLabel)
-// and the hybrid PQC suite are added in Plan 2.
+// Package cipher implements the MLS ciphersuite registry and the cryptography
+// of RFC 9420 §5: hash, HMAC, HKDF, signatures, labeled key derivation
+// (RefHash/ExpandWithLabel/DeriveSecret/DeriveTreeSecret/SignWithLabel), and
+// HPKE-based labeled public-key encryption (EncryptWithLabel/DecryptWithLabel,
+// §5.1.3). It registers the classical suites 0x0001 and 0x0002 plus the
+// private-use X-Wing post-quantum hybrid suite.
 package cipher
 
 import (

@@ -159,11 +159,12 @@ Mirrors OpenMLS / mls-rs practice. Source: [`mlswg/mls-implementations`](https:/
 
 ## 7. Cryptography & PQC
 
-- **HPKE (RFC 9180)** with a **pluggable KEM**. The library exposes a **ciphersuite registry** so classical, hybrid-KEM, and (future) fully-hybrid suites are all definable.
-- **Default production suite = hybrid KEM** `X25519 + ML-KEM-768` (the `X25519MLKEM768` / X-Wing construction) with **classical Ed25519 signatures**.
+- **HPKE (RFC 9180)** via the **Go 1.26 standard library `crypto/hpke`** — no third-party crypto dependency. The library exposes a **ciphersuite registry** so classical, hybrid-KEM, and (future) fully-hybrid suites are all definable, each carrying its HPKE `KEM`/`KDF`/`AEAD` choice.
+- **Default production suite = hybrid KEM via X-Wing** (`X25519 + ML-KEM-768`, HPKE KEM id `0x647a`, exposed as `hpke.MLKEM768X25519()` in stdlib) with **classical Ed25519 signatures**. **Note:** stdlib `MLKEM768X25519()` is **X-Wing** (draft-connolly-cfrg-xwing-kem, SHA3-256 combiner), which is *not* the TLS-draft concatenation hybrid also confusingly named `X25519MLKEM768`. We deliberately use **X-Wing**: it is the hybrid construction being standardized for post-quantum HPKE, ships in the stdlib, and no MLS PQ ciphersuite is IANA-registered yet (so there is nothing to interop with that would require the TLS-concat variant).
 - **Why classical signatures:** the KEM protects confidentiality against *harvest-now-decrypt-later* (the real PQ threat). Signatures only matter for **live MITM**, which a future quantum computer cannot perform *retroactively*; forging a past signature is impossible. PQ signatures (ML-DSA ~3 KB keys+sigs) would bloat every KeyPackage, leaf, and Commit — multiplying metalbond fan-out cost — for no retroactive benefit. Upgradeable later via the registry.
-- **Ciphersuite IDs:** classical suites use their IANA IDs; the hybrid suite uses a **private-use range ID** until/unless an IETF PQ-MLS suite is registered, at which point the registry makes swapping trivial.
-- **PQC standardization risk** is tracked as an open item (§12) — the X-Wing vs X25519MLKEM768 construction and IETF PQ-MLS outcome may still move.
+- **Ciphersuite IDs:** classical suites use their IANA IDs (0x0001 = DHKEM-X25519/AES-128-GCM/SHA-256/Ed25519, 0x0002 = DHKEM-P256/...); the X-Wing hybrid suite uses a **private-use range ID** until/unless an IETF PQ-MLS suite is registered, at which point the registry makes swapping trivial.
+- **EncryptWithLabel/DecryptWithLabel** (RFC 9420 §5.1.3) map to HPKE base-mode `SealBase`/`OpenBase` with `info = EncryptContext` (`opaque<V>("MLS 1.0 "+Label) || opaque<V>(Context)`) and empty `aad`, returning `(kem_output, ciphertext)`. The stateful `crypto/hpke` `NewSender`/`Seal` + `NewRecipient`/`Open` API gives the required `enc`/ciphertext split. The `crypto-basics` `encrypt_with_label` vector is verified by **decrypting** (HPKE is randomized), not re-encrypting.
+- **PQC standardization risk** is tracked as an open item (§12) — the X-Wing vs TLS-concat outcome and IETF PQ-MLS registration may still move; the registry isolates this.
 
 ---
 

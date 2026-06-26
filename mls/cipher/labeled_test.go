@@ -32,4 +32,7 @@ func TestSignVerifyWithLabel(t *testing.T) {
 	if cs.VerifyWithLabel(pub, "FramedContentTBS", []byte("tampered"), sig) {
 		t.Fatal("VerifyWithLabel accepted a forged signature")
 	}
+	if cs.VerifyWithLabel(pub, "OtherLabel", content, sig) {
+		t.Fatal("VerifyWithLabel accepted signature under wrong label")
+	}
 }

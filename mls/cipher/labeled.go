@@ -3,6 +3,7 @@ package cipher
 import (
 	"crypto"
 	"encoding/binary"
+	"fmt"
 
 	"github.com/trevex/mls-mlkem-go/mls/syntax"
 )
@@ -30,6 +31,9 @@ func (s Suite) RefHash(label string, value []byte) ([]byte, error) {
 //	KDFLabel = struct{ uint16 length; opaque label<V>; opaque context<V> }
 //	label = "MLS 1.0 " + Label
 func (s Suite) ExpandWithLabel(secret []byte, label string, context []byte, length int) ([]byte, error) {
+	if length < 0 || length > 0xFFFF {
+		return nil, fmt.Errorf("cipher: ExpandWithLabel: length %d out of range [0, 65535]", length)
+	}
 	var buf []byte
 	buf = binary.BigEndian.AppendUint16(buf, uint16(length))
 	lbl, err := syntax.WriteOpaqueV([]byte(mlsLabelPrefix + label))

@@ -108,6 +108,79 @@ func (p *TreeKEMPrivate) privateKey(node uint32) ([]byte, bool) {
 	return k, ok
 }
 
+// installPath blanks the sender's full direct path, installs the new public keys
+// for its filtered direct path (with empty unmerged_leaves), and assigns parent
+// hashes top-down (RFC 9420 §7.5 step 1-2 + §7.9.1). nodePubs[k] is the new
+// public key for filtered-direct-path node fdp[k]. It returns fdp.
+func (t *RatchetTree) installPath(senderLeaf uint32, nodePubs [][]byte) ([]uint32, error) {
+	leaves := t.leafCount()
+	senderNode := 2 * senderLeaf
+	fdp := t.filteredDirectPath(senderLeaf)
+	if len(fdp) != len(nodePubs) {
+		return nil, fmt.Errorf("tree: %d public keys for filtered direct path of length %d", len(nodePubs), len(fdp))
+	}
+	// Blank the full direct path.
+	root := Root(leaves)
+	for x := senderNode; x != root; {
+		p, _ := Parent(x, leaves)
+		t.nodes[p] = nil
+		x = p
+	}
+	// Install new public keys.
+	for k, p := range fdp {
+		t.nodes[p] = &Node{Parent: &ParentNode{EncryptionKey: nodePubs[k]}}
+	}
+	// Assign parent hashes top-down (root first).
+	for k := len(fdp) - 1; k >= 0; k-- {
+		p := fdp[k]
+		if k == len(fdp)-1 {
+			t.nodes[p].Parent.ParentHash = nil // root: empty parent hash
+			continue
+		}
+		parent := fdp[k+1]
+		pc := t.pathChild(parent, p)
+		s, _ := Sibling(pc, leaves)
+		ph, err := t.parentHashOf(parent, s)
+		if err != nil {
+			return nil, err
+		}
+		t.nodes[p].Parent.ParentHash = ph
+	}
+	return fdp, nil
+}
+
+// leafParentHash returns the parent hash the sender's leaf should carry, i.e.
+// the parent hash of the lowest filtered-direct-path node with the leaf's copath
+// sibling (RFC 9420 §7.9.1). Returns nil when the filtered direct path is empty.
+func (t *RatchetTree) leafParentHash(senderLeaf uint32, fdp []uint32) ([]byte, error) {
+	if len(fdp) == 0 {
+		return nil, nil
+	}
+	leaves := t.leafCount()
+	senderNode := 2 * senderLeaf
+	parent := fdp[0]
+	pc := t.pathChild(parent, senderNode)
+	s, _ := Sibling(pc, leaves)
+	return t.parentHashOf(parent, s)
+}
+
+// Merge applies a received UpdatePath to the tree in place (RFC 9420 §7.5):
+// blank the sender's direct path, install the UpdatePath public keys and parent
+// hashes, and install the sender's (already-signed) leaf node verbatim. Parent-
+// hash validity is verified separately by the caller via VerifyParentHashes.
+func (t *RatchetTree) Merge(senderLeaf uint32, up *UpdatePath) error {
+	pubs := make([][]byte, len(up.Nodes))
+	for k, n := range up.Nodes {
+		pubs[k] = n.EncryptionKey
+	}
+	if _, err := t.installPath(senderLeaf, pubs); err != nil {
+		return err
+	}
+	leaf := up.LeafNode
+	t.nodes[2*senderLeaf] = &Node{Leaf: &leaf}
+	return nil
+}
+
 // ensure bytes/crypto are referenced (used by Process/Generate added later).
 var _ = bytes.Equal
 var _ crypto.Signer

@@ -103,3 +103,30 @@ func TestTreeKEMPrivateDerivesNodeKey(t *testing.T) {
 		t.Fatalf("missing derived private key at node 1")
 	}
 }
+
+func TestMergeReproducesTreeHashAfter(t *testing.T) {
+	suite, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	c := loadTreeKEM(t)[0]
+	up := c.UpdatePaths[0]
+	rt, err := ParseRatchetTree(suite, hx(t, c.RatchetTree))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path UpdatePath
+	if err := path.UnmarshalMLS(hx(t, up.UpdatePath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Merge(up.Sender, &path); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	th, err := rt.RootTreeHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(th, hx(t, up.TreeHashAfter)) {
+		t.Fatalf("tree_hash_after:\n got %x\nwant %x", th, hx(t, up.TreeHashAfter))
+	}
+	if ok, err := rt.VerifyParentHashes(); err != nil || !ok {
+		t.Fatalf("VerifyParentHashes = %v, %v; want true, nil", ok, err)
+	}
+}

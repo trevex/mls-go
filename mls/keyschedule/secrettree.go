@@ -98,6 +98,11 @@ func (st *SecretTree) deriveNode(node uint32, secret []byte) error {
 
 // KeyNonce returns the AEAD key and nonce for a leaf's ratchet at the given
 // generation (RFC 9420 §9.1). The running secret is advanced from generation 0.
+//
+// KeyNonce is stateless: it re-derives the ratchet from generation 0 on every
+// call, which is correct for verification and KATs but O(generation) per call.
+// Production senders/receivers must keep a stateful ratchet (advancing and
+// discarding consumed generations) to preserve forward secrecy and performance.
 func (st *SecretTree) KeyNonce(leaf uint32, rt RatchetType, generation uint32) (key, nonce []byte, err error) {
 	var base []byte
 	switch rt {

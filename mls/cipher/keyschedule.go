@@ -1,6 +1,9 @@
 package cipher
 
-import "crypto/hkdf"
+import (
+	"crypto/hkdf"
+	"fmt"
+)
 
 // Extract implements the MLS key schedule's KDF.Extract (RFC 9420 §8): it
 // returns a pseudorandom key of length KDF.Nh.
@@ -21,7 +24,7 @@ func (s Suite) AEADKeySize() int {
 	case 0x0002, 0x0003: // AES-256-GCM, ChaCha20Poly1305
 		return 32
 	default:
-		return 0
+		panic(fmt.Sprintf("cipher: unknown AEAD id %#x", s.aead.ID()))
 	}
 }
 
@@ -32,7 +35,7 @@ func (s Suite) AEADNonceSize() int {
 	case 0x0001, 0x0002, 0x0003:
 		return 12
 	default:
-		return 0
+		panic(fmt.Sprintf("cipher: unknown AEAD id %#x", s.aead.ID()))
 	}
 }
 

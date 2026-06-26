@@ -89,6 +89,10 @@ func decodeUpdatePath(c *syntax.Cursor) (UpdatePath, error) {
 	return u, nil
 }
 
+// DecodeUpdatePath decodes an UpdatePath from a cursor (used by framing to
+// delimit a Commit's optional<UpdatePath>).
+func DecodeUpdatePath(c *syntax.Cursor) (UpdatePath, error) { return decodeUpdatePath(c) }
+
 // MarshalMLS encodes the UpdatePath to its MLS wire form.
 func (u UpdatePath) MarshalMLS() ([]byte, error) {
 	b := syntax.NewBuilder()

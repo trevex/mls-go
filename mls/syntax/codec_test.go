@@ -57,6 +57,22 @@ func TestBuilderCursorOpaqueV(t *testing.T) {
 	}
 }
 
+func TestCursorRest(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04}
+	c := NewCursor(data)
+	if _, err := c.ReadUint8(); err != nil {
+		t.Fatal(err)
+	}
+	rest := c.Rest()
+	if !bytes.Equal(rest, []byte{0x02, 0x03, 0x04}) {
+		t.Fatalf("Rest() = %x, want 02 03 04", rest)
+	}
+	// Rest should not advance the cursor.
+	if c.Remaining() != 3 {
+		t.Fatalf("Remaining() = %d, want 3", c.Remaining())
+	}
+}
+
 func TestCursorShortReads(t *testing.T) {
 	c := NewCursor([]byte{0x01})
 	if _, err := c.ReadUint16(); err == nil {

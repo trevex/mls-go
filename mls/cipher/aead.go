@@ -32,6 +32,9 @@ func (s Suite) Seal(key, nonce, aad, plaintext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(nonce) != a.NonceSize() {
+		return nil, fmt.Errorf("cipher: nonce length %d, want %d", len(nonce), a.NonceSize())
+	}
 	return a.Seal(nil, nonce, plaintext, aad), nil
 }
 
@@ -42,6 +45,9 @@ func (s Suite) Open(key, nonce, aad, ciphertext []byte) ([]byte, error) {
 	a, err := s.aeadCipher(key)
 	if err != nil {
 		return nil, err
+	}
+	if len(nonce) != a.NonceSize() {
+		return nil, fmt.Errorf("cipher: nonce length %d, want %d", len(nonce), a.NonceSize())
 	}
 	return a.Open(nil, nonce, ciphertext, aad)
 }

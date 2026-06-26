@@ -23,6 +23,14 @@ func TestParentNonPowerOfTwo(t *testing.T) {
 	if s, ok := Sibling(8, 5); !ok || s != 3 {
 		t.Fatalf("Sibling(8,5)=(%d,%v), want (3,true)", s, ok)
 	}
+	// Right child of the root in a 5-leaf tree must be clamped into the tree.
+	if r, ok := Right(7, 5); !ok || r != 8 {
+		t.Fatalf("Right(7,5)=(%d,%v), want (8,true)", r, ok)
+	}
+	// Sibling of node 3 (the previously-buggy left-branch case).
+	if s, ok := Sibling(3, 5); !ok || s != 8 {
+		t.Fatalf("Sibling(3,5)=(%d,%v), want (8,true)", s, ok)
+	}
 }
 
 func TestRootAndParentSmall(t *testing.T) {

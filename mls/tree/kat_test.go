@@ -63,7 +63,7 @@ func TestTreeMathKAT(t *testing.T) {
 			for i := uint32(0); i < c.NNodes; i++ {
 				lv, lok := tree.Left(i)
 				check(t, int(i), "left", c.Left[i], lv, lok)
-				rv, rok := tree.Right(i)
+				rv, rok := tree.Right(i, c.NLeaves)
 				check(t, int(i), "right", c.Right[i], rv, rok)
 				pv, pok := tree.Parent(i, c.NLeaves)
 				check(t, int(i), "parent", c.Parent[i], pv, pok)

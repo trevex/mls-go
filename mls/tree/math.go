@@ -50,13 +50,21 @@ func Left(x uint32) (uint32, bool) {
 	return x ^ (1 << (k - 1)), true
 }
 
-// Right returns the right child of x; ok is false if x is a leaf.
-func Right(x uint32) (uint32, bool) {
+// Right returns the right child of x within a tree of nLeaves; ok is false if
+// x is a leaf. For non-full trees the right child is clamped down the left
+// spine until it lands within the tree (RFC 9420 §4.1.2).
+// x must be a valid node index: 0 <= x < NodeWidth(nLeaves).
+func Right(x, nLeaves uint32) (uint32, bool) {
 	k := level(x)
 	if k == 0 {
 		return 0, false
 	}
-	return x ^ (3 << (k - 1)), true
+	r := x ^ (3 << (k - 1))
+	w := NodeWidth(nLeaves)
+	for r >= w {
+		r, _ = Left(r) // r is internal here, so Left always succeeds
+	}
+	return r, true
 }
 
 // parentStep climbs one edge in the complete (infinite) binary tree, ignoring
@@ -93,7 +101,7 @@ func Sibling(x, nLeaves uint32) (uint32, bool) {
 		return 0, false
 	}
 	l, _ := Left(p)
-	r, _ := Right(p) // p is always internal, so both children exist
+	r, _ := Right(p, nLeaves) // p is always internal, so it has both children
 	if l == x {
 		return r, true
 	}

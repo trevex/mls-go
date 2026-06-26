@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-mlkem-go/mls/syntax"
 )
 
 func hx(t *testing.T, s string) []byte {
@@ -101,6 +102,71 @@ func TestTreeKEMPrivateDerivesNodeKey(t *testing.T) {
 	}
 	if _, ok := priv.privateKey(1); !ok {
 		t.Fatalf("missing derived private key at node 1")
+	}
+}
+
+// newProvisionalGC serializes a GroupContext{version=mls10, ...} with empty
+// extensions, matching keyschedule.GroupContext's wire form (RFC 9420 §8.1).
+func newProvisionalGC(cs uint16, gid []byte, epoch uint64, treeHash, cth []byte) []byte {
+	b := syntax.NewBuilder()
+	b.WriteUint16(uint16(ProtocolVersionMLS10))
+	b.WriteUint16(cs)
+	_ = b.WriteOpaqueV(gid)
+	b.WriteUint64(epoch)
+	_ = b.WriteOpaqueV(treeHash)
+	_ = b.WriteOpaqueV(cth)
+	_ = syntax.WriteVectorV(b, []Extension{}, func(b *syntax.Builder, e Extension) error { return e.marshal(b) })
+	return b.Bytes()
+}
+
+// provisionalGroupContext builds the serialized provisional GroupContext used as
+// HPKE context for an UpdatePath (RFC 9420 §7.6): version=mls10, the scenario's
+// cipher_suite/group_id/epoch/confirmed_transcript_hash, tree_hash = the merged
+// tree's root hash, empty extensions. Built by hand here to avoid importing
+// keyschedule into the internal (package tree) test.
+func provisionalGroupContext(t *testing.T, suite cipher.Suite, c tkCase, mergedTreeHash []byte) []byte {
+	t.Helper()
+	b := newProvisionalGC(c.CipherSuite, hx(t, c.GroupID), c.Epoch, mergedTreeHash, hx(t, c.ConfirmedTranscriptHash))
+	return b
+}
+
+func TestProcessUpdatePathScenario0(t *testing.T) {
+	suite, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	c := loadTreeKEM(t)[0]
+	up := c.UpdatePaths[0] // sender 0
+	var path UpdatePath
+	if err := path.UnmarshalMLS(hx(t, up.UpdatePath)); err != nil {
+		t.Fatal(err)
+	}
+	// provisional group context: merge a fresh copy to get the tree hash.
+	merged, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
+	if err := merged.Merge(up.Sender, &path); err != nil {
+		t.Fatal(err)
+	}
+	mergedHash, _ := merged.RootTreeHash()
+	gc := provisionalGroupContext(t, suite, c, mergedHash)
+
+	// receiver = leaf 1.
+	lp := c.LeavesPrivate[1]
+	if lp.Index != 1 {
+		t.Fatalf("expected leaves_private[1].index == 1, got %d", lp.Index)
+	}
+	priv := NewTreeKEMPrivate(lp.Index, hx(t, lp.EncryptionPriv))
+	for _, ps := range lp.PathSecrets {
+		if err := priv.AddPathSecret(suite, ps.Node, hx(t, ps.PathSecret)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
+	pathSecret, commit, err := rt.ProcessUpdatePath(up.Sender, &path, priv, gc)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if want := up.PathSecrets[1]; want == nil || !bytes.Equal(pathSecret, hx(t, *want)) {
+		t.Fatalf("path_secret = %x, want %v", pathSecret, want)
+	}
+	if !bytes.Equal(commit, hx(t, up.CommitSecret)) {
+		t.Fatalf("commit_secret = %x, want %s", commit, up.CommitSecret)
 	}
 }
 

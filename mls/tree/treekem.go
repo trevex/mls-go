@@ -181,6 +181,71 @@ func (t *RatchetTree) Merge(senderLeaf uint32, up *UpdatePath) error {
 	return nil
 }
 
-// ensure bytes/crypto are referenced (used by Process/Generate added later).
-var _ = bytes.Equal
+// ProcessUpdatePath decrypts the path secret addressed to priv, derives the
+// remaining path secrets up to the root (verifying each derived public key
+// against the UpdatePath), and returns the decrypted path secret (i.e. the
+// vector's path_secrets[priv.LeafIndex]) and the commit secret (RFC 9420
+// §7.5/§7.6). It does not mutate the tree; groupContext is the serialized
+// provisional GroupContext for the new epoch.
+func (t *RatchetTree) ProcessUpdatePath(senderLeaf uint32, up *UpdatePath, priv *TreeKEMPrivate, groupContext []byte) (pathSecret, commitSecret []byte, err error) {
+	senderNode := 2 * senderLeaf
+	fdp := t.filteredDirectPath(senderLeaf)
+	if len(fdp) != len(up.Nodes) {
+		return nil, nil, fmt.Errorf("tree: UpdatePath has %d nodes, filtered direct path has %d", len(up.Nodes), len(fdp))
+	}
+	// Find the lowest filtered-direct-path node whose copath child resolution
+	// contains a node we hold a private key for, and decrypt at that index.
+	foundK := -1
+	var decrypted []byte
+	for k, p := range fdp {
+		cc := t.copathChild(p, senderNode)
+		res := t.Resolution(cc)
+		for idx, d := range res {
+			sk, ok := priv.privateKey(d)
+			if !ok {
+				continue
+			}
+			if idx >= len(up.Nodes[k].EncryptedPathSecret) {
+				return nil, nil, fmt.Errorf("tree: resolution index %d out of range for node %d", idx, p)
+			}
+			ct := up.Nodes[k].EncryptedPathSecret[idx]
+			ps, derr := t.suite.DecryptWithLabel(sk, "UpdatePathNode", groupContext, ct.KemOutput, ct.Ciphertext)
+			if derr != nil {
+				return nil, nil, derr
+			}
+			decrypted, foundK = ps, k
+			break
+		}
+		if foundK >= 0 {
+			break
+		}
+	}
+	if foundK < 0 {
+		return nil, nil, fmt.Errorf("tree: leaf %d holds no key in any copath resolution", priv.LeafIndex)
+	}
+	// Derive up to the root, verifying public keys.
+	cur := decrypted
+	for k := foundK; k < len(fdp); k++ {
+		_, pub, derr := nodeKeyPair(t.suite, cur)
+		if derr != nil {
+			return nil, nil, derr
+		}
+		if !bytes.Equal(pub, up.Nodes[k].EncryptionKey) {
+			return nil, nil, fmt.Errorf("tree: derived public key mismatch at node %d", fdp[k])
+		}
+		if k < len(fdp)-1 {
+			cur, derr = t.suite.DeriveSecret(cur, "path")
+			if derr != nil {
+				return nil, nil, derr
+			}
+		}
+	}
+	commitSecret, err = CommitSecret(t.suite, cur)
+	if err != nil {
+		return nil, nil, err
+	}
+	return decrypted, commitSecret, nil
+}
+
+// ensure crypto is referenced (used by GenerateUpdatePath added later).
 var _ crypto.Signer

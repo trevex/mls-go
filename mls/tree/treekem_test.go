@@ -2,6 +2,7 @@ package tree
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -194,5 +195,48 @@ func TestMergeReproducesTreeHashAfter(t *testing.T) {
 	}
 	if ok, err := rt.VerifyParentHashes(); err != nil || !ok {
 		t.Fatalf("VerifyParentHashes = %v, %v; want true, nil", ok, err)
+	}
+}
+
+func TestGenerateUpdatePathRoundTripScenario0(t *testing.T) {
+	suite, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	c := loadTreeKEM(t)[0]
+	up := c.UpdatePaths[0] // sender 0
+	signer := ed25519.NewKeyFromSeed(hx(t, c.LeavesPrivate[0].SignaturePriv))
+
+	rt, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
+	leafSecret := make([]byte, suite.HashLen())
+	for i := range leafSecret { // deterministic, non-zero leaf secret
+		leafSecret[i] = byte(i + 1)
+	}
+	mkGC := func(treeHash []byte) ([]byte, error) {
+		return newProvisionalGC(c.CipherSuite, hx(t, c.GroupID), c.Epoch, treeHash, hx(t, c.ConfirmedTranscriptHash)), nil
+	}
+	newUP, newCommit, err := rt.GenerateUpdatePath(up.Sender, leafSecret, signer, hx(t, c.GroupID), mkGC)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	// Generated tree must be parent-hash valid and the new leaf must verify.
+	if ok, err := rt.VerifyParentHashes(); err != nil || !ok {
+		t.Fatalf("generated tree VerifyParentHashes = %v, %v", ok, err)
+	}
+	if ok, err := newUP.LeafNode.verifySignature(suite, hx(t, c.GroupID), up.Sender); err != nil || !ok {
+		t.Fatalf("generated leaf signature invalid: %v, %v", ok, err)
+	}
+	// Re-process with leaf 1 against a fresh copy of the ORIGINAL tree.
+	th, _ := rt.RootTreeHash()
+	gc, _ := mkGC(th)
+	lp := c.LeavesPrivate[1]
+	priv := NewTreeKEMPrivate(lp.Index, hx(t, lp.EncryptionPriv))
+	for _, ps := range lp.PathSecrets {
+		_ = priv.AddPathSecret(suite, ps.Node, hx(t, ps.PathSecret))
+	}
+	orig, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
+	_, commit, err := orig.ProcessUpdatePath(up.Sender, newUP, priv, gc)
+	if err != nil {
+		t.Fatalf("re-process: %v", err)
+	}
+	if !bytes.Equal(commit, newCommit) {
+		t.Fatalf("re-processed commit %x != generated %x", commit, newCommit)
 	}
 }

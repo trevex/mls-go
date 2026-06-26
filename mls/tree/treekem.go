@@ -247,5 +247,134 @@ func (t *RatchetTree) ProcessUpdatePath(senderLeaf uint32, up *UpdatePath, priv 
 	return decrypted, commitSecret, nil
 }
 
-// ensure crypto is referenced (used by GenerateUpdatePath added later).
-var _ crypto.Signer
+// GenerateUpdatePath creates a fresh UpdatePath for senderLeaf and applies it to
+// t in place (RFC 9420 §7.5 committer side). It samples new key material from
+// leafSecret, blanks+rekeys the sender's direct path, builds and signs a new
+// commit leaf, and encrypts each path secret to the resolution of the
+// corresponding copath child. mkGroupContext builds the serialized provisional
+// GroupContext from the post-update root tree hash (the HPKE context); groupID
+// is the group identifier used in the leaf's signature context. Returns the
+// UpdatePath and the commit secret.
+func (t *RatchetTree) GenerateUpdatePath(senderLeaf uint32, leafSecret []byte, signer crypto.Signer, groupID []byte, mkGroupContext func(treeHash []byte) ([]byte, error)) (*UpdatePath, []byte, error) {
+	suite := t.suite
+	senderNode := 2 * senderLeaf
+	origNode := t.nodes[senderNode]
+	if origNode == nil || origNode.Leaf == nil {
+		return nil, nil, fmt.Errorf("tree: sender leaf %d is blank", senderLeaf)
+	}
+	orig := *origNode.Leaf
+	fdp := t.filteredDirectPath(senderLeaf)
+
+	// Path secrets (Figure 14 model): path_secret[0] = DeriveSecret(leafSecret,"path").
+	pathSecrets := make([][]byte, len(fdp))
+	for k := range fdp {
+		var src []byte
+		if k == 0 {
+			src = leafSecret
+		} else {
+			src = pathSecrets[k-1]
+		}
+		ps, err := suite.DeriveSecret(src, "path")
+		if err != nil {
+			return nil, nil, err
+		}
+		pathSecrets[k] = ps
+	}
+	last := leafSecret
+	if len(fdp) > 0 {
+		last = pathSecrets[len(fdp)-1]
+	}
+	commitSecret, err := CommitSecret(suite, last)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Leaf key pair and node key pairs.
+	leafNodeSecret, err := suite.DeriveSecret(leafSecret, "node")
+	if err != nil {
+		return nil, nil, err
+	}
+	_, leafPub, err := suite.DeriveKeyPair(leafNodeSecret)
+	if err != nil {
+		return nil, nil, err
+	}
+	nodePubs := make([][]byte, len(fdp))
+	for k := range fdp {
+		_, pub, err := nodeKeyPair(suite, pathSecrets[k])
+		if err != nil {
+			return nil, nil, err
+		}
+		nodePubs[k] = pub
+	}
+
+	// Snapshot each copath child's resolution public keys BEFORE mutating the tree.
+	resPubs := make([][][]byte, len(fdp))
+	for k, p := range fdp {
+		res := t.Resolution(t.copathChild(p, senderNode))
+		pubs := make([][]byte, len(res))
+		for i, d := range res {
+			pk, err := t.nodePublicKey(d)
+			if err != nil {
+				return nil, nil, err
+			}
+			pubs[i] = pk
+		}
+		resPubs[k] = pubs
+	}
+
+	// Blank + install public keys + parent hashes.
+	if _, err := t.installPath(senderLeaf, nodePubs); err != nil {
+		return nil, nil, err
+	}
+
+	// Build and sign the new commit leaf.
+	ph, err := t.leafParentHash(senderLeaf, fdp)
+	if err != nil {
+		return nil, nil, err
+	}
+	leaf := LeafNode{
+		EncryptionKey:  leafPub,
+		SignatureKey:   orig.SignatureKey,
+		Credential:     orig.Credential,
+		Capabilities:   orig.Capabilities,
+		LeafNodeSource: LeafNodeSourceCommit,
+		ParentHash:     ph,
+		Extensions:     orig.Extensions,
+	}
+	tbs, err := leaf.tbs(groupID, senderLeaf)
+	if err != nil {
+		return nil, nil, err
+	}
+	sig, err := suite.SignWithLabel(signer, "LeafNodeTBS", tbs)
+	if err != nil {
+		return nil, nil, err
+	}
+	leaf.Signature = sig
+	leafCopy := leaf
+	t.nodes[senderNode] = &Node{Leaf: &leafCopy}
+
+	// Provisional group context from the post-update root tree hash.
+	treeHash, err := t.RootTreeHash()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupContext, err := mkGroupContext(treeHash)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Encrypt path secrets to the copath resolutions.
+	nodes := make([]UpdatePathNode, len(fdp))
+	for k := range fdp {
+		cts := make([]HPKECiphertext, len(resPubs[k]))
+		for i, pub := range resPubs[k] {
+			kem, ct, err := suite.EncryptWithLabel(pub, "UpdatePathNode", groupContext, pathSecrets[k])
+			if err != nil {
+				return nil, nil, err
+			}
+			cts[i] = HPKECiphertext{KemOutput: kem, Ciphertext: ct}
+		}
+		nodes[k] = UpdatePathNode{EncryptionKey: nodePubs[k], EncryptedPathSecret: cts}
+	}
+	return &UpdatePath{LeafNode: leaf, Nodes: nodes}, commitSecret, nil
+}

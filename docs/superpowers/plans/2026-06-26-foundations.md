@@ -23,6 +23,7 @@
 | `mls/tree/math_test.go` | Unit tests for small trees |
 | `mls/tree/kat_test.go` | `tree-math.json` KAT |
 | `mls/cipher/suite.go` | `CipherSuite` type + registry; hash/HMAC/HKDF/signature primitives for suites 0x0001 & 0x0002 |
+| `mls/cipher/errors.go` | Sentinel errors for the cipher package |
 | `mls/cipher/suite_test.go` | Registry + primitive sanity tests |
 | `mls/cipher/labeled.go` | `RefHash`, `ExpandWithLabel`, `DeriveSecret`, `DeriveTreeSecret`, `SignWithLabel`/`VerifyWithLabel` |
 | `mls/cipher/labeled_test.go` | Unit tests for labeled crypto |

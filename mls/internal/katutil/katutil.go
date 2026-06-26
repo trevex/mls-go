@@ -32,8 +32,10 @@ func (h *HexBytes) UnmarshalJSON(data []byte) error {
 }
 
 // Load reads and JSON-decodes a vendored KAT file into v. The name is the
-// bare file name, e.g. "tree-math.json". Tests live one directory below the
-// module root, so testdata is resolved relative to the caller's package dir.
+// bare file name, e.g. "tree-math.json". testdata is looked up at
+// filepath.Join("..", "testdata", name), so this helper only works when the
+// calling test package's directory is a direct child of the directory that
+// contains testdata/ (i.e. mls/<pkg>/ calling mls/testdata/).
 func Load(t *testing.T, name string, v any) {
 	t.Helper()
 	path := filepath.Join("..", "testdata", name)

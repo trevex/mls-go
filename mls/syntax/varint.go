@@ -41,6 +41,7 @@ func ReadVarint(b []byte) (uint64, int, error) {
 	for i := 1; i < length; i++ {
 		v = (v << 8) | uint64(b[i])
 	}
+	// WriteVarint cannot fail here: v is bounded by its decoded prefix range.
 	canon, _ := WriteVarint(v)
 	if len(canon) != length {
 		return 0, 0, fmt.Errorf("syntax: non-minimal varint encoding")
@@ -58,7 +59,8 @@ func WriteOpaqueV(b []byte) ([]byte, error) {
 }
 
 // ReadOpaqueV decodes a varint-prefixed byte vector, returning the contents and
-// total bytes consumed (prefix + body).
+// total bytes consumed (prefix + body). The returned slice is a sub-slice of b;
+// callers who need to retain it after b is modified must copy it.
 func ReadOpaqueV(b []byte) ([]byte, int, error) {
 	n, hdrLen, err := ReadVarint(b)
 	if err != nil {

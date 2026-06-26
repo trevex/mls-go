@@ -50,3 +50,30 @@ func TestOpaqueVRoundTrip(t *testing.T) {
 		t.Fatalf("opaque round-trip: got %q (n=%d), want %q (n=%d)", got, n, in, len(enc))
 	}
 }
+
+func TestWriteVarintOverflow(t *testing.T) {
+	if _, err := WriteVarint(MaxVarint + 1); err == nil {
+		t.Fatal("expected error for value exceeding MaxVarint, got nil")
+	}
+}
+
+func TestReadOpaqueVShort(t *testing.T) {
+	// Header claims 9 bytes of body but only 2 follow.
+	if _, _, err := ReadOpaqueV([]byte{0x09, 0x00, 0x01}); err == nil {
+		t.Fatal("expected error for truncated opaque<V>, got nil")
+	}
+}
+
+func TestOpaqueVEmpty(t *testing.T) {
+	enc, err := WriteOpaqueV(nil)
+	if err != nil {
+		t.Fatalf("WriteOpaqueV(nil): %v", err)
+	}
+	got, n, err := ReadOpaqueV(enc)
+	if err != nil {
+		t.Fatalf("ReadOpaqueV: %v", err)
+	}
+	if len(got) != 0 || n != len(enc) {
+		t.Fatalf("empty round-trip: got len=%d (n=%d), want len=0 (n=%d)", len(got), n, len(enc))
+	}
+}

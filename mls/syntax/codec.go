@@ -113,6 +113,10 @@ func (c *Cursor) ReadVarint() (uint64, error) {
 	return v, nil
 }
 
+// Rest returns the remaining unread bytes without consuming them. The result
+// aliases the underlying buffer; do not retain it past further reads.
+func (c *Cursor) Rest() []byte { return c.buf }
+
 // ReadOpaqueV consumes a varint-length-prefixed byte vector.
 func (c *Cursor) ReadOpaqueV() ([]byte, error) {
 	n, err := c.ReadVarint()

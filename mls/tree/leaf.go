@@ -287,6 +287,10 @@ func (l LeafNode) verifySignature(suite cipher.Suite, groupID []byte, leafIndex 
 	return suite.VerifyWithLabel(l.SignatureKey, "LeafNodeTBS", tbs, l.Signature), nil
 }
 
+// DecodeLeafNode decodes a LeafNode from a cursor (used by framing to delimit
+// an Update proposal's inline LeafNode).
+func DecodeLeafNode(c *syntax.Cursor) (LeafNode, error) { return decodeLeafNode(c) }
+
 // MarshalMLS encodes the LeafNode to its MLS wire form.
 func (l LeafNode) MarshalMLS() ([]byte, error) {
 	b := syntax.NewBuilder()

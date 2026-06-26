@@ -39,6 +39,9 @@ func TestResolutionFigure10(t *testing.T) {
 	if got := tr.Resolution(4); !eqU32(got, []uint32{}) {
 		t.Fatalf("res(4)=%v want []", got)
 	}
+	if got := tr.Resolution(12); !eqU32(got, []uint32{}) {
+		t.Fatalf("res(12)=%v want []", got)
+	}
 	if got := tr.Resolution(7); !eqU32(got, []uint32{1, 2, 9, 14}) {
 		t.Fatalf("res(7)=%v want [1 2 9 14]", got)
 	}

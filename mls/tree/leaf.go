@@ -70,39 +70,39 @@ func (c Capabilities) marshal(b *syntax.Builder) error {
 }
 
 func decodeCapabilities(c *syntax.Cursor) (Capabilities, error) {
-	var cap Capabilities
+	var caps Capabilities
 	var err error
-	if cap.Versions, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ProtocolVersion, error) {
+	if caps.Versions, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ProtocolVersion, error) {
 		v, err := c.ReadUint16()
 		return ProtocolVersion(v), err
 	}); err != nil {
-		return cap, err
+		return caps, err
 	}
-	if cap.CipherSuites, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (cipher.CipherSuite, error) {
+	if caps.CipherSuites, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (cipher.CipherSuite, error) {
 		v, err := c.ReadUint16()
 		return cipher.CipherSuite(v), err
 	}); err != nil {
-		return cap, err
+		return caps, err
 	}
-	if cap.Extensions, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ExtensionType, error) {
+	if caps.Extensions, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ExtensionType, error) {
 		v, err := c.ReadUint16()
 		return ExtensionType(v), err
 	}); err != nil {
-		return cap, err
+		return caps, err
 	}
-	if cap.Proposals, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ProposalType, error) {
+	if caps.Proposals, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (ProposalType, error) {
 		v, err := c.ReadUint16()
 		return ProposalType(v), err
 	}); err != nil {
-		return cap, err
+		return caps, err
 	}
-	if cap.Credentials, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (CredentialType, error) {
+	if caps.Credentials, err = syntax.ReadVectorV(c, func(c *syntax.Cursor) (CredentialType, error) {
 		v, err := c.ReadUint16()
 		return CredentialType(v), err
 	}); err != nil {
-		return cap, err
+		return caps, err
 	}
-	return cap, nil
+	return caps, nil
 }
 
 // Lifetime is the validity window for a key_package LeafNode (RFC 9420 §7.2).

@@ -71,6 +71,38 @@ func TestVerifyParentHashesAndSignatures(t *testing.T) {
 	}
 }
 
+func TestVerifyLeafSignaturesRejectsBadSig(t *testing.T) {
+	suite, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	groupID := []byte("g")
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	leaf := &LeafNode{
+		EncryptionKey:  []byte("enc"),
+		SignatureKey:   []byte(pub),
+		Credential:     Credential{CredentialType: CredentialTypeBasic, Identity: []byte("a")},
+		Capabilities:   sampleCapabilities(),
+		LeafNodeSource: LeafNodeSourceKeyPackage,
+		Lifetime:       &Lifetime{NotBefore: 0, NotAfter: 1},
+		Extensions:     []Extension{},
+	}
+	tbs, _ := leaf.tbs(groupID, 0)
+	leaf.Signature, _ = suite.SignWithLabel(priv, "LeafNodeTBS", tbs)
+	tr := &RatchetTree{suite: suite, nodes: []*Node{{Leaf: leaf}}}
+
+	// Sanity check: valid signature must pass.
+	if err := tr.VerifyLeafSignatures(groupID); err != nil {
+		t.Fatalf("expected valid signature to pass: %v", err)
+	}
+
+	// Corrupt the signature and assert verification fails.
+	corrupt := *leaf
+	corrupt.Signature = append([]byte{}, leaf.Signature...)
+	corrupt.Signature[0] ^= 0xff
+	tr.nodes[0] = &Node{Leaf: &corrupt}
+	if err := tr.VerifyLeafSignatures(groupID); err == nil {
+		t.Fatal("expected bad-signature error, got nil")
+	}
+}
+
 func TestVerifyLeafSignaturesRejectsDuplicateKeys(t *testing.T) {
 	suite, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
 	groupID := []byte("g")

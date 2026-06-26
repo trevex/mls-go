@@ -60,7 +60,10 @@ func decodeNode(c *syntax.Cursor) (Node, error) {
 	return n, nil
 }
 
-// MarshalMLS encodes a single populated Node (RFC 9420 §12.4.3.1).
+// MarshalMLS encodes a single populated Node (RFC 9420 §12.4.3.1). To decode
+// a full tree, use ParseRatchetTree (or RatchetTree.UnmarshalMLS), which carries
+// the required cipher suite; a bare Node has no standalone UnmarshalMLS for
+// that reason.
 func (n Node) MarshalMLS() ([]byte, error) {
 	b := syntax.NewBuilder()
 	if err := n.marshal(b); err != nil {
@@ -104,9 +107,8 @@ func ParseRatchetTree(suite cipher.Suite, data []byte) (*RatchetTree, error) {
 	if nodes[len(nodes)-1] == nil {
 		return nil, fmt.Errorf("tree: ratchet_tree must not end with a blank node")
 	}
-	for uint32(len(nodes)) < fullWidth(uint32(len(nodes))) {
-		nodes = append(nodes, nil)
-	}
+	w := fullWidth(uint32(len(nodes)))
+	nodes = append(nodes, make([]*Node, w-uint32(len(nodes)))...)
 	return &RatchetTree{suite: suite, nodes: nodes}, nil
 }
 

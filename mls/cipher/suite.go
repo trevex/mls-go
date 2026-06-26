@@ -6,11 +6,13 @@ package cipher
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/hkdf"
 	"crypto/hmac"
+	"crypto/hpke"
 	"crypto/sha256"
 	"hash"
 )
@@ -31,13 +33,14 @@ const (
 	SigECDSAP256
 )
 
-// Suite bundles the primitive constructors for one ciphersuite. KEM/AEAD/HPKE
-// fields are added in Plan 2; this struct intentionally exposes only what the
-// foundation needs.
+// Suite bundles the primitive constructors for one ciphersuite.
 type Suite struct {
 	ID      CipherSuite
 	NewHash func() hash.Hash
 	Sig     SignatureScheme
+	kem     hpke.KEM
+	kdf     hpke.KDF
+	aead    hpke.AEAD
 }
 
 var registry = map[CipherSuite]Suite{
@@ -45,11 +48,17 @@ var registry = map[CipherSuite]Suite{
 		ID:      X25519_AES128GCM_SHA256_Ed25519,
 		NewHash: sha256.New,
 		Sig:     SigEd25519,
+		kem:     hpke.DHKEM(ecdh.X25519()),
+		kdf:     hpke.HKDFSHA256(),
+		aead:    hpke.AES128GCM(),
 	},
 	P256_AES128GCM_SHA256_P256: {
 		ID:      P256_AES128GCM_SHA256_P256,
 		NewHash: sha256.New,
 		Sig:     SigECDSAP256,
+		kem:     hpke.DHKEM(ecdh.P256()),
+		kdf:     hpke.HKDFSHA256(),
+		aead:    hpke.AES128GCM(),
 	},
 }
 
@@ -97,6 +106,21 @@ func (s Suite) verifyClassical(pub, message, sig []byte) bool {
 	default:
 		return false
 	}
+}
+
+// GenerateHPKEKeyPair generates a fresh HPKE key pair for the suite's KEM,
+// returning the serialized private and public keys (the MLS HPKEPrivateKey /
+// HPKEPublicKey encodings).
+func (s Suite) GenerateHPKEKeyPair() (priv, pub []byte, err error) {
+	sk, err := s.kem.GenerateKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	privBytes, err := sk.Bytes()
+	if err != nil {
+		return nil, nil, err
+	}
+	return privBytes, sk.PublicKey().Bytes(), nil
 }
 
 // signClassical signs message with priv for the suite's scheme. Used by

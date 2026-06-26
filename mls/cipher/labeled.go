@@ -2,6 +2,7 @@ package cipher
 
 import (
 	"crypto"
+	"crypto/hpke"
 	"encoding/binary"
 	"fmt"
 
@@ -65,14 +66,15 @@ func (s Suite) DeriveTreeSecret(secret []byte, label string, generation uint32, 
 	return s.ExpandWithLabel(secret, label, ctx, length)
 }
 
-// signContent builds SignContent = struct{ opaque label<V>; opaque content<V> }
-// with label = "MLS 1.0 " + Label (RFC 9420 §5.1.2).
-func (s Suite) signContent(label string, content []byte) ([]byte, error) {
+// labeledContext builds the struct{ opaque label<V>; opaque data<V> } used by
+// both SignContent (RFC 9420 §5.1.2) and EncryptContext (§5.1.3), with
+// label = "MLS 1.0 " + Label.
+func (s Suite) labeledContext(label string, data []byte) ([]byte, error) {
 	lbl, err := syntax.WriteOpaqueV([]byte(mlsLabelPrefix + label))
 	if err != nil {
 		return nil, err
 	}
-	body, err := syntax.WriteOpaqueV(content)
+	body, err := syntax.WriteOpaqueV(data)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +83,7 @@ func (s Suite) signContent(label string, content []byte) ([]byte, error) {
 
 // SignWithLabel signs content under the labeled scheme (RFC 9420 §5.1.2).
 func (s Suite) SignWithLabel(priv crypto.Signer, label string, content []byte) ([]byte, error) {
-	tbs, err := s.signContent(label, content)
+	tbs, err := s.labeledContext(label, content)
 	if err != nil {
 		return nil, err
 	}
@@ -90,9 +92,55 @@ func (s Suite) SignWithLabel(priv crypto.Signer, label string, content []byte) (
 
 // VerifyWithLabel verifies a labeled signature (RFC 9420 §5.1.2).
 func (s Suite) VerifyWithLabel(pub []byte, label string, content, sig []byte) bool {
-	tbs, err := s.signContent(label, content)
+	tbs, err := s.labeledContext(label, content)
 	if err != nil {
 		return false
 	}
 	return s.verifyClassical(pub, tbs, sig)
+}
+
+// EncryptWithLabel implements RFC 9420 §5.1.3:
+//
+//	EncryptWithLabel(PublicKey, Label, Context, Plaintext)
+//	    = SealBase(PublicKey, EncryptContext, "", Plaintext)
+//
+// EncryptContext = struct{ opaque label<V> = "MLS 1.0 "+Label; opaque
+// context<V> = Context }. Returns the KEM output (HPKE enc) and AEAD
+// ciphertext separately. pub is the serialized HPKEPublicKey.
+func (s Suite) EncryptWithLabel(pub []byte, label string, context, plaintext []byte) (kemOutput, ciphertext []byte, err error) {
+	pk, err := s.kem.NewPublicKey(pub)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.labeledContext(label, context)
+	if err != nil {
+		return nil, nil, err
+	}
+	enc, sender, err := hpke.NewSender(pk, s.kdf, s.aead, info)
+	if err != nil {
+		return nil, nil, err
+	}
+	ct, err := sender.Seal(nil, plaintext)
+	if err != nil {
+		return nil, nil, err
+	}
+	return enc, ct, nil
+}
+
+// DecryptWithLabel implements RFC 9420 §5.1.3 OpenBase. priv is the serialized
+// HPKEPrivateKey; kemOutput is the HPKE enc from EncryptWithLabel.
+func (s Suite) DecryptWithLabel(priv []byte, label string, context, kemOutput, ciphertext []byte) ([]byte, error) {
+	sk, err := s.kem.NewPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	info, err := s.labeledContext(label, context)
+	if err != nil {
+		return nil, err
+	}
+	recipient, err := hpke.NewRecipient(kemOutput, sk, s.kdf, s.aead, info)
+	if err != nil {
+		return nil, err
+	}
+	return recipient.Open(nil, ciphertext)
 }

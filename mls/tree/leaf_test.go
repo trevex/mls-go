@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-mlkem-go/mls/syntax"
 )
 
 func sampleCapabilities() Capabilities {
@@ -97,5 +98,24 @@ func TestLeafNodeSignVerify(t *testing.T) {
 	// Wrong group context must fail.
 	if ok, _ := leaf.verifySignature(suite, []byte("other"), leafIndex); ok {
 		t.Fatal("verify should fail with wrong group_id")
+	}
+}
+
+func TestExtensionExportedCodec(t *testing.T) {
+	in := Extension{ExtensionType: 0x0005, ExtensionData: []byte("data")}
+	b := syntax.NewBuilder()
+	if err := in.MarshalTo(b); err != nil {
+		t.Fatal(err)
+	}
+	c := syntax.NewCursor(b.Bytes())
+	out, err := DecodeExtension(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Empty() {
+		t.Fatal("trailing bytes")
+	}
+	if out.ExtensionType != in.ExtensionType || string(out.ExtensionData) != "data" {
+		t.Fatalf("round-trip mismatch: %+v", out)
 	}
 }

@@ -40,6 +40,15 @@ type signVec struct {
 	Label     string           `json:"label"`
 	Signature katutil.HexBytes `json:"signature"`
 }
+type encryptVec struct {
+	Priv       katutil.HexBytes `json:"priv"`
+	Pub        katutil.HexBytes `json:"pub"`
+	Label      string           `json:"label"`
+	Context    katutil.HexBytes `json:"context"`
+	Plaintext  katutil.HexBytes `json:"plaintext"`
+	KEMOutput  katutil.HexBytes `json:"kem_output"`
+	Ciphertext katutil.HexBytes `json:"ciphertext"`
+}
 type cryptoBasicsCase struct {
 	CipherSuite      cipher.CipherSuite `json:"cipher_suite"`
 	RefHash          refHashVec         `json:"ref_hash"`
@@ -47,7 +56,7 @@ type cryptoBasicsCase struct {
 	DeriveSecret     deriveSecretVec    `json:"derive_secret"`
 	DeriveTreeSecret deriveTreeVec      `json:"derive_tree_secret"`
 	SignWithLabel    signVec            `json:"sign_with_label"`
-	// encrypt_with_label is deferred to a later plan (needs HPKE).
+	EncryptWithLabel encryptVec         `json:"encrypt_with_label"`
 }
 
 func TestCryptoBasicsKAT(t *testing.T) {
@@ -88,6 +97,14 @@ func TestCryptoBasicsKAT(t *testing.T) {
 			sw := c.SignWithLabel
 			if !cs.VerifyWithLabel(sw.Pub, sw.Label, sw.Content, sw.Signature) {
 				t.Fatalf("case %d SignWithLabel: VerifyWithLabel rejected the vector signature", i)
+			}
+
+			// encrypt_with_label: decrypt the vector's (kem_output, ciphertext)
+			// with priv and compare to plaintext.
+			enc := c.EncryptWithLabel
+			pt, err := cs.DecryptWithLabel(enc.Priv, enc.Label, enc.Context, enc.KEMOutput, enc.Ciphertext)
+			if err != nil || !bytes.Equal(pt, enc.Plaintext) {
+				t.Fatalf("case %d EncryptWithLabel(decrypt): got %x err %v, want %x", i, pt, err, enc.Plaintext)
 			}
 		})
 	}

@@ -151,6 +151,15 @@ func decodeExtension(c *syntax.Cursor) (Extension, error) {
 	return Extension{ExtensionType: ExtensionType(et), ExtensionData: data}, nil
 }
 
+// MarshalTo writes the Extension into b (RFC 9420 §7.2). Exported so that other
+// packages (e.g. mls/keyschedule, for GroupContext.extensions<V>) can embed an
+// Extension vector via syntax.WriteVectorV.
+func (e Extension) MarshalTo(b *syntax.Builder) error { return e.marshal(b) }
+
+// DecodeExtension reads one Extension from c. Exported counterpart to MarshalTo,
+// suitable as the element decoder for syntax.ReadVectorV.
+func DecodeExtension(c *syntax.Cursor) (Extension, error) { return decodeExtension(c) }
+
 // LeafNode describes a member's appearance in the ratchet tree (RFC 9420 §7.2).
 type LeafNode struct {
 	EncryptionKey  []byte // HPKEPublicKey opaque<V>

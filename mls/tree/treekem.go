@@ -10,7 +10,7 @@ import (
 
 // CommitSecret derives the commit secret from the topmost path secret of an
 // UpdatePath: commit_secret = DeriveSecret(path_secret[n], "path") (RFC 9420
-// §12.4 — the path secret one step past the root).
+// §7.4 — the path secret one step past the root).
 func CommitSecret(suite cipher.Suite, lastPathSecret []byte) ([]byte, error) {
 	return suite.DeriveSecret(lastPathSecret, "path")
 }

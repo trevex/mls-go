@@ -212,7 +212,7 @@ func TestGenerateUpdatePathRoundTripScenario0(t *testing.T) {
 	mkGC := func(treeHash []byte) ([]byte, error) {
 		return newProvisionalGC(c.CipherSuite, hx(t, c.GroupID), c.Epoch, treeHash, hx(t, c.ConfirmedTranscriptHash)), nil
 	}
-	newUP, newCommit, err := rt.GenerateUpdatePath(up.Sender, leafSecret, signer, hx(t, c.GroupID), mkGC)
+	newUP, newCommit, _, err := rt.GenerateUpdatePath(up.Sender, leafSecret, signer, hx(t, c.GroupID), nil, mkGC)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}

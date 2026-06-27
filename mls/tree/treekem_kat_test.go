@@ -180,7 +180,7 @@ func TestTreeKEMKAT(t *testing.T) {
 					t.Fatal(err)
 				}
 				mkGC := func(treeHash []byte) ([]byte, error) { return provisionalGC(sc.CipherSuite, sc, treeHash) }
-				newUP, newCommit, err := genTree.GenerateUpdatePath(up.Sender, leafSecret, signer, sc.GroupID, mkGC)
+				newUP, newCommit, _, err := genTree.GenerateUpdatePath(up.Sender, leafSecret, signer, sc.GroupID, nil, mkGC)
 				if err != nil {
 					t.Fatalf("up %d: generate: %v", ui, err)
 				}

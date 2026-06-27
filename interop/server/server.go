@@ -325,6 +325,99 @@ func (s *Server) HandlePendingCommit(_ context.Context, req *pb.HandlePendingCom
 	return &pb.HandleCommitResponse{StateId: req.StateId, EpochAuthenticator: ea}, nil
 }
 
+func (s *Server) Export(_ context.Context, req *pb.ExportRequest) (*pb.ExportResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	out, err := st.g.Exporter(req.Label, req.Context, int(req.KeyLength))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Exporter: %v", err)
+	}
+	return &pb.ExportResponse{ExportedSecret: out}, nil
+}
+
+func (s *Server) Protect(_ context.Context, req *pb.ProtectRequest) (*pb.ProtectResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	ct, err := st.g.ProtectApplication(req.Plaintext, req.AuthenticatedData)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ProtectApplication: %v", err)
+	}
+	return &pb.ProtectResponse{Ciphertext: ct}, nil
+}
+
+func (s *Server) Unprotect(_ context.Context, req *pb.UnprotectRequest) (*pb.UnprotectResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	pt, ad, err := st.g.UnprotectApplication(req.Ciphertext)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "UnprotectApplication: %v", err)
+	}
+	return &pb.UnprotectResponse{Plaintext: pt, AuthenticatedData: ad}, nil
+}
+
+func (s *Server) GroupInfo(_ context.Context, req *pb.GroupInfoRequest) (*pb.GroupInfoResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	gi, err := st.g.PublishGroupInfo()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "PublishGroupInfo: %v", err)
+	}
+	giBytes, err := gi.MarshalMLS()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "marshal group_info: %v", err)
+	}
+	// The ratchet_tree is carried inside the GroupInfo's 0x0002 extension; we mirror
+	// it in the response's ratchet_tree field too (callers may pass external_tree).
+	return &pb.GroupInfoResponse{GroupInfo: giBytes, RatchetTree: gi.RatchetTreeExtension()}, nil
+}
+
+func (s *Server) ExternalJoin(_ context.Context, req *pb.ExternalJoinRequest) (*pb.ExternalJoinResponse, error) {
+	if req.EncryptHandshake {
+		return nil, status.Error(codes.Unimplemented, "encrypted handshake not supported")
+	}
+	if len(req.Psks) > 0 {
+		return nil, status.Error(codes.Unimplemented, "PSKs in external join not supported")
+	}
+	var gi group.GroupInfo
+	if err := gi.UnmarshalMLS(req.GroupInfo); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "parse group_info: %v", err)
+	}
+	suite, err := lookupSuite(uint32(gi.GroupContext.CipherSuite))
+	if err != nil {
+		return nil, err
+	}
+	signer, _, err := newSigner(gi.GroupContext.CipherSuite)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "newSigner: %v", err)
+	}
+	cred := tree.Credential{CredentialType: tree.CredentialTypeBasic, Identity: req.Identity}
+	g, commit, err := group.ExternalCommit(suite, gi, cred, signer, maxLifetime())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ExternalCommit: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := s.alloc()
+	s.states[id] = &state{suite: suite, g: g}
+	return &pb.ExternalJoinResponse{StateId: id, Commit: commit, EpochAuthenticator: g.EpochAuthenticator()}, nil
+}
+
 func (s *Server) Free(_ context.Context, req *pb.FreeRequest) (*pb.FreeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

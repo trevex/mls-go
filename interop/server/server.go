@@ -260,6 +260,71 @@ func (s *Server) RemoveProposal(_ context.Context, req *pb.RemoveProposalRequest
 	return &pb.ProposalResponse{Proposal: msg}, nil
 }
 
+func (s *Server) Commit(_ context.Context, req *pb.CommitRequest) (*pb.CommitResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	opt := group.CommitOptions{ByReference: req.ByReference}
+	for _, pd := range req.ByValue {
+		switch string(pd.ProposalType) {
+		case "add":
+			// Engine constraint: Welcome-producing Adds MUST be by-value.
+			kp, err := group.DecodeKeyPackageMessage(pd.KeyPackage)
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "by_value add: %v", err)
+			}
+			opt.ByValue = append(opt.ByValue, group.ProposeAdd(kp))
+		case "remove":
+			leaf, err := st.resolveIdentity(pd.RemovedId)
+			if err != nil {
+				return nil, err
+			}
+			opt.ByValue = append(opt.ByValue, group.ProposeRemove(leaf))
+		default:
+			return nil, status.Errorf(codes.Unimplemented, "by_value proposal_type %q not supported", pd.ProposalType)
+		}
+	}
+	commit, welcome, err := st.g.Commit(opt)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Commit: %v", err)
+	}
+	// Engine advances the committer in place; stash the new epoch auth for
+	// HandlePendingCommit to report (proto's pending-commit semantics).
+	st.pendingEpochAuth = st.g.EpochAuthenticator()
+	return &pb.CommitResponse{Commit: commit, Welcome: welcome}, nil
+}
+
+func (s *Server) HandleCommit(_ context.Context, req *pb.HandleCommitRequest) (*pb.HandleCommitResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.g.ProcessCommit(req.Proposal, req.Commit); err != nil {
+		return nil, status.Errorf(codes.Internal, "ProcessCommit: %v", err)
+	}
+	return &pb.HandleCommitResponse{StateId: req.StateId, EpochAuthenticator: st.g.EpochAuthenticator()}, nil
+}
+
+func (s *Server) HandlePendingCommit(_ context.Context, req *pb.HandlePendingCommitRequest) (*pb.HandleCommitResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	if st.pendingEpochAuth == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no pending commit")
+	}
+	ea := st.pendingEpochAuth
+	st.pendingEpochAuth = nil
+	return &pb.HandleCommitResponse{StateId: req.StateId, EpochAuthenticator: ea}, nil
+}
+
 func (s *Server) Free(_ context.Context, req *pb.FreeRequest) (*pb.FreeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

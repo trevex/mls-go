@@ -14,6 +14,11 @@ import (
 // (RFC 9420 §17.3).
 const ExtensionTypeRatchetTree = 0x0002
 
+// ExtensionTypeExternalPub is the extension_type for the external_pub extension
+// (RFC 9420 §17.3). It carries the group's external HPKE public key so a
+// non-member can compute the external-init secret for an external Commit.
+const ExtensionTypeExternalPub tree.ExtensionType = 0x0004
+
 // GroupInfo is the §12.4.3.1 GroupInfo message: a GroupContext, extensions
 // (typically carrying the ratchet_tree), a confirmation_tag, the signer leaf
 // index, and a GroupInfoTBS signature.
@@ -113,6 +118,19 @@ func (gi GroupInfo) VerifySignature(suite cipher.Suite, signerPub []byte) (bool,
 func (gi GroupInfo) RatchetTreeExtension() []byte {
 	for _, ext := range gi.Extensions {
 		if ext.ExtensionType == ExtensionTypeRatchetTree {
+			return ext.ExtensionData
+		}
+	}
+	return nil
+}
+
+// ExternalPubExtension returns the data of the external_pub (0x0004) extension,
+// or nil if absent. The bytes are the serialized HPKEPublicKey used by a
+// non-member to compute the external-init secret for an external Commit
+// (RFC 9420 §12.4.3.2).
+func (gi GroupInfo) ExternalPubExtension() []byte {
+	for _, ext := range gi.Extensions {
+		if ext.ExtensionType == ExtensionTypeExternalPub {
 			return ext.ExtensionData
 		}
 	}

@@ -342,3 +342,161 @@ func TestGroupInfoRatchetTreeExtension(t *testing.T) {
 		t.Fatal("expected nil for missing ratchet_tree extension")
 	}
 }
+
+// ─── Welcome family tests ────────────────────────────────────────────────────
+
+func TestPathSecretRoundTrip(t *testing.T) {
+	ps := PathSecret{PathSecret: []byte{0x01, 0x02, 0x03}}
+	raw, err := ps.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+	var ps2 PathSecret
+	if err := ps2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+	raw2, err := ps2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("PathSecret round-trip mismatch: %x vs %x", raw, raw2)
+	}
+}
+
+func TestGroupSecretsRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gs   GroupSecrets
+	}{
+		{
+			name: "no_path_no_psk",
+			gs: GroupSecrets{
+				JoinerSecret: []byte{0xaa, 0xbb},
+				PathSecret:   nil,
+				PSKs:         nil,
+			},
+		},
+		{
+			name: "with_path",
+			gs: GroupSecrets{
+				JoinerSecret: []byte{0xcc, 0xdd},
+				PathSecret:   &PathSecret{PathSecret: []byte{0x11, 0x22}},
+				PSKs:         nil,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := tc.gs.MarshalMLS()
+			if err != nil {
+				t.Fatalf("MarshalMLS: %v", err)
+			}
+			var gs2 GroupSecrets
+			if err := gs2.UnmarshalMLS(raw); err != nil {
+				t.Fatalf("UnmarshalMLS: %v", err)
+			}
+			raw2, err := gs2.MarshalMLS()
+			if err != nil {
+				t.Fatalf("re-MarshalMLS: %v", err)
+			}
+			if !bytes.Equal(raw, raw2) {
+				t.Fatalf("round-trip mismatch: %x vs %x", raw, raw2)
+			}
+		})
+	}
+}
+
+func TestWelcomeRoundTrip(t *testing.T) {
+	w := Welcome{
+		CipherSuite: cipher.X25519_AES128GCM_SHA256_Ed25519,
+		Secrets: []EncryptedGroupSecrets{
+			{
+				NewMember: []byte{0x01, 0x02, 0x03, 0x04},
+				EncryptedGroupSecrets: tree.HPKECiphertext{
+					KemOutput:  []byte{0x05, 0x06},
+					Ciphertext: []byte{0x07, 0x08},
+				},
+			},
+		},
+		EncryptedGroupInfo: []byte{0x09, 0x0a, 0x0b},
+	}
+
+	raw, err := w.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+	var w2 Welcome
+	if err := w2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+	raw2, err := w2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("Welcome round-trip mismatch: %x vs %x", raw, raw2)
+	}
+}
+
+func TestMLSMessageEnvelopes(t *testing.T) {
+	kp := minimalKeyPackage()
+	kpEnv, err := EncodeKeyPackageMessage(kp)
+	if err != nil {
+		t.Fatalf("EncodeKeyPackageMessage: %v", err)
+	}
+	kp2, err := DecodeKeyPackageMessage(kpEnv)
+	if err != nil {
+		t.Fatalf("DecodeKeyPackageMessage: %v", err)
+	}
+	kpEnv2, err := EncodeKeyPackageMessage(kp2)
+	if err != nil {
+		t.Fatalf("EncodeKeyPackageMessage round2: %v", err)
+	}
+	if !bytes.Equal(kpEnv, kpEnv2) {
+		t.Fatalf("KeyPackage envelope round-trip mismatch: %x vs %x", kpEnv, kpEnv2)
+	}
+
+	gi := GroupInfo{
+		GroupContext:    minimalGroupContext(),
+		Extensions:      nil,
+		ConfirmationTag: []byte{0x01},
+		Signer:          0,
+		Signature:       []byte{0x02},
+	}
+	giEnv, err := EncodeGroupInfoMessage(gi)
+	if err != nil {
+		t.Fatalf("EncodeGroupInfoMessage: %v", err)
+	}
+	gi2, err := DecodeGroupInfoMessage(giEnv)
+	if err != nil {
+		t.Fatalf("DecodeGroupInfoMessage: %v", err)
+	}
+	giEnv2, err := EncodeGroupInfoMessage(gi2)
+	if err != nil {
+		t.Fatalf("EncodeGroupInfoMessage round2: %v", err)
+	}
+	if !bytes.Equal(giEnv, giEnv2) {
+		t.Fatalf("GroupInfo envelope round-trip mismatch: %x vs %x", giEnv, giEnv2)
+	}
+
+	w := Welcome{
+		CipherSuite:        cipher.X25519_AES128GCM_SHA256_Ed25519,
+		Secrets:            nil,
+		EncryptedGroupInfo: []byte{0x0a, 0x0b},
+	}
+	wEnv, err := EncodeWelcomeMessage(w)
+	if err != nil {
+		t.Fatalf("EncodeWelcomeMessage: %v", err)
+	}
+	w2, err := DecodeWelcomeMessage(wEnv)
+	if err != nil {
+		t.Fatalf("DecodeWelcomeMessage: %v", err)
+	}
+	wEnv2, err := EncodeWelcomeMessage(w2)
+	if err != nil {
+		t.Fatalf("EncodeWelcomeMessage round2: %v", err)
+	}
+	if !bytes.Equal(wEnv, wEnv2) {
+		t.Fatalf("Welcome envelope round-trip mismatch: %x vs %x", wEnv, wEnv2)
+	}
+}

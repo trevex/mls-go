@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-mlkem-go/mls/framing"
 	"github.com/trevex/mls-mlkem-go/mls/group"
 )
 
@@ -215,7 +216,10 @@ func TestExternalCommitAntiDoubleJoin(t *testing.T) {
 }
 
 // TestExternalCommitValidation tests that malformed external commits are rejected
-// and leave g unchanged (Task 3 negative gate).
+// and leave g unchanged (Task 3 negative gate, RFC 9420 §12.4.3.2).
+//
+// The validity checks in processExternalCommit run BEFORE signature verification,
+// so we can inject malformed Commit bodies without needing a valid signature.
 func TestExternalCommitValidation(t *testing.T) {
 	executed := 0
 	for _, csID := range externalCommitSuites {
@@ -233,39 +237,107 @@ func TestExternalCommitValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PublishGroupInfo: %v", err)
 			}
-
 			carolSigner := makeSigner(t)
 
-			// A valid external commit (baseline).
+			// Baseline: a valid external commit must succeed.
 			_, validCommit, err := group.ExternalCommit(suite, *gi, makeCred("carol"), carolSigner, makeLifetime())
 			if err != nil {
 				t.Fatalf("ExternalCommit (baseline): %v", err)
 			}
 
-			// Attempt to process the valid commit as an existing member: should succeed.
-			aliceEpoch := alice.Epoch()
-			if err := alice.ProcessCommit(nil, validCommit); err != nil {
-				t.Fatalf("ProcessCommit(valid external): %v", err)
-			}
-			if alice.Epoch() != aliceEpoch+1 {
-				t.Fatalf("alice epoch %d after valid external commit, want %d", alice.Epoch(), aliceEpoch+1)
+			// Helper: decode → modify Commit → re-encode → return new message bytes.
+			// The validity checks fire before signature verification, so the invalid
+			// signature on the tampered message is irrelevant for these cases.
+			tamperCommit := func(t *testing.T, src []byte, mutate func(*group.Commit)) []byte {
+				t.Helper()
+				var m framing.MLSMessage
+				if err := m.UnmarshalMLS(src); err != nil {
+					t.Fatalf("UnmarshalMLS: %v", err)
+				}
+				var cm group.Commit
+				if err := cm.UnmarshalMLS(m.Public.Content.Content); err != nil {
+					t.Fatalf("Commit.UnmarshalMLS: %v", err)
+				}
+				mutate(&cm)
+				newBody, err := cm.MarshalMLS()
+				if err != nil {
+					t.Fatalf("Commit.MarshalMLS: %v", err)
+				}
+				m.Public.Content.Content = newBody
+				out, err := m.MarshalMLS()
+				if err != nil {
+					t.Fatalf("MLSMessage.MarshalMLS: %v", err)
+				}
+				return out
 			}
 
-			// Rebuild alice at epoch 1 for the negative tests.
-			alice2, _ := buildTwoMemberGroup(t, suite)
-			gi2, err := alice2.PublishGroupInfo()
-			if err != nil {
-				t.Fatalf("PublishGroupInfo (alice2): %v", err)
+			// assertRejected verifies that g rejects the commit and leaves the epoch
+			// unchanged (state-atomicity guarantee).
+			assertRejected := func(t *testing.T, g *group.Group, commitBytes []byte, desc string) {
+				t.Helper()
+				epBefore := g.Epoch()
+				if err := g.ProcessCommit(nil, commitBytes); err == nil {
+					t.Errorf("%s: expected error, got nil", desc)
+				} else {
+					t.Logf("%s: correctly rejected: %v", desc, err)
+				}
+				if g.Epoch() != epBefore {
+					t.Errorf("%s: epoch changed (%d → %d) after rejected commit", desc, epBefore, g.Epoch())
+				}
 			}
 
-			// Negative test: process a regular member commit through ProcessCommit —
-			// this is a non-external commit and should still work fine (no regression).
-			_, commitBytes, err := alice2.Commit(group.CommitOptions{})
-			if err != nil {
-				t.Fatalf("Commit (regular): %v", err)
+			// Need a fresh alice for each negative test (valid commit advances alice above).
+			freshAlice := func(t *testing.T) *group.Group {
+				t.Helper()
+				a, _ := buildTwoMemberGroup(t, suite)
+				return a
 			}
-			_ = commitBytes
-			_ = gi2
+
+			// ── Negative 1: two ExternalInit proposals ────────────────────────────
+			twoExtInit := tamperCommit(t, validCommit, func(cm *group.Commit) {
+				cm.Proposals = append(cm.Proposals, group.ProposalOrRef{
+					Type: group.ProposalOrRefTypeProposal,
+					Proposal: &group.Proposal{
+						Type:         group.ProposalTypeExternalInit,
+						ExternalInit: &group.ExternalInit{KemOutput: []byte("extra")},
+					},
+				})
+			})
+			assertRejected(t, freshAlice(t), twoExtInit, "two ExternalInit proposals")
+
+			// ── Negative 2: path-less external commit ─────────────────────────────
+			noPath := tamperCommit(t, validCommit, func(cm *group.Commit) {
+				cm.Path = nil
+			})
+			assertRejected(t, freshAlice(t), noPath, "no path")
+
+			// ── Negative 3: by-reference proposal in external commit ──────────────
+			byRef := tamperCommit(t, validCommit, func(cm *group.Commit) {
+				cm.Proposals = append(cm.Proposals, group.ProposalOrRef{
+					Type:      group.ProposalOrRefTypeReference,
+					Reference: []byte("fakeref000000000000000000000000000"),
+				})
+			})
+			assertRejected(t, freshAlice(t), byRef, "by-reference proposal")
+
+			// ── Positive baseline (after negative tests) ──────────────────────────
+			// Rebuild a fresh alice and verify the valid commit still advances epoch.
+			alice3, _ := buildTwoMemberGroup(t, suite)
+			gi3, err := alice3.PublishGroupInfo()
+			if err != nil {
+				t.Fatalf("PublishGroupInfo (alice3): %v", err)
+			}
+			_, validCommit3, err := group.ExternalCommit(suite, *gi3, makeCred("dave"), makeSigner(t), makeLifetime())
+			if err != nil {
+				t.Fatalf("ExternalCommit (alice3/dave): %v", err)
+			}
+			epochBefore := alice3.Epoch()
+			if err := alice3.ProcessCommit(nil, validCommit3); err != nil {
+				t.Fatalf("ProcessCommit (valid, alice3): %v", err)
+			}
+			if alice3.Epoch() != epochBefore+1 {
+				t.Fatalf("alice3 epoch %d after valid external commit, want %d", alice3.Epoch(), epochBefore+1)
+			}
 		})
 	}
 	if executed == 0 {

@@ -6,6 +6,7 @@ import (
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
 	"github.com/trevex/mls-mlkem-go/mls/framing"
 	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-mlkem-go/mls/tree"
 )
 
 // externalCommitSuites is the ordered list of suites exercised in external-commit
@@ -189,20 +190,65 @@ func TestExternalCommitAntiDoubleJoin(t *testing.T) {
 				t.Fatalf("ExternalCommit(bob2 anti-dj): %v", err)
 			}
 
+			// Assert the generated commit contains a Remove of bob2's stale leaf
+			// (§12.4.3.2 anti-double-join property).
+			{
+				var m framing.MLSMessage
+				if err := m.UnmarshalMLS(commitMsg); err != nil {
+					t.Fatalf("decode anti-dj commit: %v", err)
+				}
+				var cm group.Commit
+				if err := cm.UnmarshalMLS(m.Public.Content.Content); err != nil {
+					t.Fatalf("decode Commit body: %v", err)
+				}
+				hasRemove := false
+				for _, por := range cm.Proposals {
+					if por.Type == group.ProposalOrRefTypeProposal &&
+						por.Proposal != nil &&
+						por.Proposal.Type == group.ProposalTypeRemove {
+						hasRemove = true
+						t.Logf("suite %#x: anti-dj Remove targets leaf %d (was stale bob2 leaf %d)",
+							csID, por.Proposal.Remove.Removed, bob2.OwnLeaf())
+					}
+				}
+				if !hasRemove {
+					t.Fatal("anti-double-join: expected a Remove proposal in the external commit")
+				}
+			}
+
 			// alice2 processes the external commit.
 			if err := alice2.ProcessCommit(nil, commitMsg); err != nil {
 				t.Fatalf("alice2.ProcessCommit(anti-dj): %v", err)
 			}
 
-			// Convergence.
+			// Convergence: both members must share byte-equal epoch_authenticator.
 			assertConverged(t, "anti-dj-epoch2", suite, alice2, newBob2)
 			t.Logf("suite %#x: anti-double-join — all converge at epoch 2, EA=%x",
 				csID, alice2.EpochAuthenticator())
 
-			// Verify tree validity (parent hashes) — newBob2 occupies exactly one leaf.
-			if newBob2.OwnLeaf() != bob2.OwnLeaf() {
-				t.Logf("note: newBob2 leaf %d, old bob2 leaf %d (may differ if tree grew)",
-					newBob2.OwnLeaf(), bob2.OwnLeaf())
+			// Verify VerifyParentHashes holds on the post-commit tree by publishing
+			// a new GroupInfo from alice2 and parsing the ratchet_tree from it.
+			gi2, err := alice2.PublishGroupInfo()
+			if err != nil {
+				t.Fatalf("alice2.PublishGroupInfo (post anti-dj): %v", err)
+			}
+			rt, err := tree.ParseRatchetTree(suite, gi2.RatchetTreeExtension())
+			if err != nil {
+				t.Fatalf("ParseRatchetTree (post anti-dj): %v", err)
+			}
+			ok, err := rt.VerifyParentHashes()
+			if err != nil || !ok {
+				t.Fatalf("VerifyParentHashes failed after anti-double-join (ok=%v, err=%v)", ok, err)
+			}
+			t.Logf("suite %#x: VerifyParentHashes passed after anti-double-join", csID)
+
+			// bob2 occupies exactly one leaf after re-join (newBob2 is the sole bob identity).
+			if newBob2.OwnLeaf() == bob2.OwnLeaf() {
+				t.Logf("suite %#x: bob re-joined at same leaf %d (stale leaf was removed + refilled)",
+					csID, newBob2.OwnLeaf())
+			} else {
+				t.Logf("suite %#x: newBob2 leaf %d, old bob2 leaf %d",
+					csID, newBob2.OwnLeaf(), bob2.OwnLeaf())
 			}
 
 			// Suppress unused variable warning from buildTwoMemberGroup.

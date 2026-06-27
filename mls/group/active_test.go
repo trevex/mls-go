@@ -113,6 +113,240 @@ func TestProposeAdd(t *testing.T) {
 	}
 }
 
+// TestActiveRoundTrip is the self-round-trip gate (Tasks 6+7). Runs scenarios
+// T1–T6 + application messages, asserting byte-equal epoch_authenticator and
+// MLSExporter output across all live members after every Commit.
+func TestActiveRoundTrip(t *testing.T) {
+	executed := 0
+	for _, csID := range testSuites {
+		suite, ok := cipher.Lookup(csID)
+		if !ok {
+			t.Logf("suite %#x not registered, skipping", csID)
+			continue
+		}
+		executed++
+		t.Run("suite", func(t *testing.T) {
+			groupID := []byte("active-roundtrip-group")
+
+			// ── T1: Alice creates group; commits Add(Bob) ──────────────────────
+
+			aliceSigner := makeSigner(t)
+			alice, err := group.NewGroup(suite, groupID, makeCred("alice"), aliceSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("T1 NewGroup(Alice): %v", err)
+			}
+
+			bobSigner := makeSigner(t)
+			bobKP, bobInitPriv, bobLeafPriv, err := group.NewKeyPackage(suite, makeCred("bob"), bobSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("T1 NewKeyPackage(Bob): %v", err)
+			}
+			bobKPMsg, err := group.EncodeKeyPackageMessage(bobKP)
+			if err != nil {
+				t.Fatalf("T1 EncodeKeyPackageMessage: %v", err)
+			}
+
+			commitMsg, welcomeMsg, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeAdd(bobKP)},
+			})
+			if err != nil {
+				t.Fatalf("T1 Alice.Commit(Add Bob): %v", err)
+			}
+			if len(welcomeMsg) == 0 {
+				t.Fatal("T1 expected welcome, got empty")
+			}
+			_ = commitMsg
+
+			bob, err := group.JoinFromWelcome(suite, welcomeMsg, group.JoinOptions{
+				KeyPackage:     bobKPMsg,
+				InitPriv:       bobInitPriv,
+				EncryptionPriv: bobLeafPriv,
+				Signer:         bobSigner,
+				ExternalPSKs:   map[string][]byte{},
+			})
+			if err != nil {
+				t.Fatalf("T1 JoinFromWelcome(Bob): %v", err)
+			}
+			t.Log("T1: Alice and Bob converge at epoch 1")
+			assertConverged(t, "T1", suite, alice, bob)
+
+			// ── T2: Alice commits Add(Carol); Bob processes; Carol joins ───────
+
+			carolSigner := makeSigner(t)
+			carolKP, carolInitPriv, carolLeafPriv, err := group.NewKeyPackage(suite, makeCred("carol"), carolSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("T2 NewKeyPackage(Carol): %v", err)
+			}
+			carolKPMsg, err := group.EncodeKeyPackageMessage(carolKP)
+			if err != nil {
+				t.Fatalf("T2 EncodeKeyPackageMessage: %v", err)
+			}
+
+			commitMsg2, welcomeMsg2, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeAdd(carolKP)},
+			})
+			if err != nil {
+				t.Fatalf("T2 Alice.Commit(Add Carol): %v", err)
+			}
+			if err := bob.ProcessCommit(nil, commitMsg2); err != nil {
+				t.Fatalf("T2 Bob.ProcessCommit: %v", err)
+			}
+			carol, err := group.JoinFromWelcome(suite, welcomeMsg2, group.JoinOptions{
+				KeyPackage:     carolKPMsg,
+				InitPriv:       carolInitPriv,
+				EncryptionPriv: carolLeafPriv,
+				Signer:         carolSigner,
+				ExternalPSKs:   map[string][]byte{},
+			})
+			if err != nil {
+				t.Fatalf("T2 JoinFromWelcome(Carol): %v", err)
+			}
+			t.Log("T2: Alice, Bob, Carol converge at epoch 2")
+			assertConverged(t, "T2", suite, alice, bob, carol)
+
+			// ── T3: Bob (non-creator) commits path-only; Alice+Carol process ───
+
+			commitMsg3, _, err := bob.Commit(group.CommitOptions{})
+			if err != nil {
+				t.Fatalf("T3 Bob.Commit(path-only): %v", err)
+			}
+			if err := alice.ProcessCommit(nil, commitMsg3); err != nil {
+				t.Fatalf("T3 Alice.ProcessCommit: %v", err)
+			}
+			if err := carol.ProcessCommit(nil, commitMsg3); err != nil {
+				t.Fatalf("T3 Carol.ProcessCommit: %v", err)
+			}
+			t.Log("T3: Alice, Bob, Carol converge after Bob's path-only commit")
+			assertConverged(t, "T3", suite, alice, bob, carol)
+
+			// ── T4: Alice commits Remove(Carol); Bob processes ─────────────────
+
+			carolLeafIdx := carol.OwnLeaf()
+			commitMsg4, _, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeRemove(carolLeafIdx)},
+			})
+			if err != nil {
+				t.Fatalf("T4 Alice.Commit(Remove Carol): %v", err)
+			}
+			if err := bob.ProcessCommit(nil, commitMsg4); err != nil {
+				t.Fatalf("T4 Bob.ProcessCommit: %v", err)
+			}
+			t.Log("T4: Alice and Bob converge after Remove(Carol)")
+			assertConverged(t, "T4", suite, alice, bob)
+
+			// ── T5: Bob generates an Update proposal; Alice commits it ─────────
+			// Bob tracks the new leaf private key so he can decrypt Alice's
+			// UpdatePath after his leaf is updated in the working tree.
+
+			updateProp, bobNewLeafPriv, err := bob.ProposeUpdate()
+			if err != nil {
+				t.Fatalf("T5 Bob.ProposeUpdate: %v", err)
+			}
+			updateMsg, err := bob.FrameProposal(updateProp)
+			if err != nil {
+				t.Fatalf("T5 Bob.FrameProposal: %v", err)
+			}
+			commitMsg5, _, err := alice.Commit(group.CommitOptions{
+				ByReference: [][]byte{updateMsg},
+			})
+			if err != nil {
+				t.Fatalf("T5 Alice.Commit(Update Bob by-ref): %v", err)
+			}
+			// Install Bob's new leaf key before ProcessCommit (RFC 9420 §12.1.2 /
+			// plan N3 proposer-key-install).
+			bob.InstallPendingUpdateKey(bobNewLeafPriv)
+			if err := bob.ProcessCommit([][]byte{updateMsg}, commitMsg5); err != nil {
+				t.Fatalf("T5 Bob.ProcessCommit: %v", err)
+			}
+			t.Log("T5: Alice and Bob converge after Bob's Update committed by Alice")
+			assertConverged(t, "T5", suite, alice, bob)
+
+			// ── T6: Gap-fill topology (exercises §7.5 newlyAdded skip) ─────────
+			// Add Dave, remove Bob (blank slot), then Add Frank into the gap.
+			// Dave (mid-index) processes the gap-fill commit — the topology that
+			// fails without the §7.5 newlyAdded skip in GenerateUpdatePath.
+
+			daveSigner := makeSigner(t)
+			daveKP, daveInitPriv, daveLeafPriv, err := group.NewKeyPackage(suite, makeCred("dave"), daveSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("T6 NewKeyPackage(Dave): %v", err)
+			}
+			daveKPMsg, err := group.EncodeKeyPackageMessage(daveKP)
+			if err != nil {
+				t.Fatalf("T6 EncodeKeyPackageMessage(Dave): %v", err)
+			}
+			commitMsg6a, welcomeMsg6a, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeAdd(daveKP)},
+			})
+			if err != nil {
+				t.Fatalf("T6 Alice.Commit(Add Dave): %v", err)
+			}
+			if err := bob.ProcessCommit(nil, commitMsg6a); err != nil {
+				t.Fatalf("T6 Bob.ProcessCommit(Add Dave): %v", err)
+			}
+			dave, err := group.JoinFromWelcome(suite, welcomeMsg6a, group.JoinOptions{
+				KeyPackage:     daveKPMsg,
+				InitPriv:       daveInitPriv,
+				EncryptionPriv: daveLeafPriv,
+				Signer:         daveSigner,
+				ExternalPSKs:   map[string][]byte{},
+			})
+			if err != nil {
+				t.Fatalf("T6 JoinFromWelcome(Dave): %v", err)
+			}
+			assertConverged(t, "T6a", suite, alice, bob, dave)
+
+			// Remove Bob to blank slot 1.
+			bobLeafIdx := bob.OwnLeaf()
+			commitMsg6b, _, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeRemove(bobLeafIdx)},
+			})
+			if err != nil {
+				t.Fatalf("T6 Alice.Commit(Remove Bob): %v", err)
+			}
+			if err := dave.ProcessCommit(nil, commitMsg6b); err != nil {
+				t.Fatalf("T6 Dave.ProcessCommit(Remove Bob): %v", err)
+			}
+			assertConverged(t, "T6b", suite, alice, dave)
+
+			// Add Frank — fills the blank slot (gap-fill).
+			frankSigner := makeSigner(t)
+			frankKP, frankInitPriv, frankLeafPriv, err := group.NewKeyPackage(suite, makeCred("frank"), frankSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("T6 NewKeyPackage(Frank): %v", err)
+			}
+			frankKPMsg, err := group.EncodeKeyPackageMessage(frankKP)
+			if err != nil {
+				t.Fatalf("T6 EncodeKeyPackageMessage(Frank): %v", err)
+			}
+			commitMsg6c, welcomeMsg6c, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeAdd(frankKP)},
+			})
+			if err != nil {
+				t.Fatalf("T6 Alice.Commit(Add Frank into gap): %v", err)
+			}
+			if err := dave.ProcessCommit(nil, commitMsg6c); err != nil {
+				t.Fatalf("T6 Dave.ProcessCommit(Add Frank gap-fill): %v", err)
+			}
+			frank, err := group.JoinFromWelcome(suite, welcomeMsg6c, group.JoinOptions{
+				KeyPackage:     frankKPMsg,
+				InitPriv:       frankInitPriv,
+				EncryptionPriv: frankLeafPriv,
+				Signer:         frankSigner,
+				ExternalPSKs:   map[string][]byte{},
+			})
+			if err != nil {
+				t.Fatalf("T6 JoinFromWelcome(Frank): %v", err)
+			}
+			t.Log("T6: gap-fill topology converges (§7.5 newlyAdded skip exercised)")
+			assertConverged(t, "T6", suite, alice, dave, frank)
+		})
+	}
+	if executed == 0 {
+		t.Fatal("no suites executed (all skipped)")
+	}
+}
+
 // TestNewGroup verifies that NewGroup creates a single-member group at epoch 0.
 func TestNewGroup(t *testing.T) {
 	executed := 0

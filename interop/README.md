@@ -24,8 +24,8 @@ all gRPC / protobuf dependencies are scoped to this nested module.
 nix develop -c bash -c 'cd interop && go test ./... -v'
 ```
 
-Runs 7 scenarios × 2 ciphersuites (0x0001 + 0xF001) entirely in-process over a
-`bufconn` listener.  All 14 sub-tests must pass.
+Runs 7 scenarios × 3 ciphersuites (0x0001 + 0x0002 + 0xF001) entirely in-process
+over a `bufconn` listener.  All 21 sub-tests must pass.
 
 Scenarios covered:
 1. **1:1 welcome-join** — `CreateGroup` → `CreateKeyPackage` → `Commit(by_value Add)` → `HandlePendingCommit` → `JoinGroup` → `StateAuth` equal
@@ -63,8 +63,10 @@ cd interop && just run port=":9000"
    mls-rs on `:50053`).
 
 3. Clone [mlswg/mls-implementations](https://github.com/mlswg/mls-implementations)
-   and run the test runner, pointing it at both servers:
+   and run its test runner from **inside that cloned repository's `interop/`
+   subdirectory** (not this repo's `interop/`):
    ```sh
+   # Inside the mlswg/mls-implementations clone:
    cd interop
    go run . --client "localhost:50051" --client "localhost:50052"
    ```

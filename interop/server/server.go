@@ -203,6 +203,8 @@ func (s *Server) JoinGroup(_ context.Context, req *pb.JoinGroupRequest) (*pb.Joi
 	}
 	id := s.alloc()
 	s.states[id] = &state{suite: tx.suite, g: g}
+	// Consumed transaction: delete to release the stored private keys.
+	delete(s.txns, req.TransactionId)
 	return &pb.JoinGroupResponse{StateId: id, EpochAuthenticator: g.EpochAuthenticator()}, nil
 }
 

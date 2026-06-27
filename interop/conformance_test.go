@@ -66,6 +66,8 @@ func suiteName(cs uint32) string {
 	switch cipher.CipherSuite(cs) {
 	case cipher.X25519_AES128GCM_SHA256_Ed25519:
 		return "0x0001"
+	case cipher.P256_AES128GCM_SHA256_P256:
+		return "0x0002"
 	case cipher.XWING_AES256GCM_SHA256_Ed25519:
 		return "0xF001"
 	default:
@@ -76,6 +78,7 @@ func suiteName(cs uint32) string {
 func testSuites() []uint32 {
 	return []uint32{
 		uint32(cipher.X25519_AES128GCM_SHA256_Ed25519),
+		uint32(cipher.P256_AES128GCM_SHA256_P256),     // advertised; must gate-pass
 		uint32(cipher.XWING_AES256GCM_SHA256_Ed25519), // self-interop only
 	}
 }

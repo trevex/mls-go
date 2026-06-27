@@ -120,4 +120,28 @@ func TestSplitBrainForkDetected(t *testing.T) {
 
 	t.Logf("§5.6 confirmed: EpochAuthenticatorRegistry detected fork at (gid=%x…, epoch=%d)",
 		gid[:4], newEpoch)
+
+	// Single-register contrast (§5.1): route BOTH competing CommitRefs to ONE
+	// MemorySequencer for the same (gid, epoch). Only the first wins; the second
+	// is rejected (ok=false). One register ⇒ one winner ⇒ no fork possible.
+	singleReg := sequencer.NewMemorySequencer()
+
+	ok1, err := singleReg.AcceptCommit(context.Background(), gid, epoch, refA)
+	if err != nil {
+		t.Fatalf("singleReg first AcceptCommit: %v", err)
+	}
+	if !ok1 {
+		t.Fatal("singleReg: expected ok=true for first commit (refA)")
+	}
+
+	ok2, err := singleReg.AcceptCommit(context.Background(), gid, epoch, refB)
+	if err != nil {
+		t.Fatalf("singleReg second AcceptCommit: %v", err)
+	}
+	if ok2 {
+		t.Fatal("singleReg: expected ok=false for competing refB — one register, one winner, no fork")
+	}
+
+	t.Logf("§5.1 single-register contrast confirmed: one MemorySequencer for (gid=%x…, epoch=%d) ⇒ refB rejected (ok=false), no fork",
+		gid[:4], epoch)
 }

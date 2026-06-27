@@ -74,6 +74,16 @@ func TestFencingSafety(t *testing.T) {
 		t.Fatalf("stale-token write: expected ErrFenced, got %v", err)
 	}
 
+	// Step 5b: stale primary cannot advance into a NEW, never-decided epoch either.
+	// Token fencing is epoch-independent: a superseded primary is fenced for ALL
+	// future epochs, not just already-decided ones (design spec §5.5). This proves
+	// the fence is on the token/writer, not on the epoch being written.
+	someFreshRef := group.CommitRef([]byte("fresh-epoch-commit"))
+	_, err = reg.Accept(vni, 1, gid, 7, someFreshRef)
+	if !errors.Is(err, sequencer.ErrFenced) {
+		t.Fatalf("stale-token write to fresh epoch 7: expected ErrFenced, got %v", err)
+	}
+
 	// Step 6: register holds exactly X@5 and Z@6 — at no point did both owners
 	// decide different commits for the same epoch.
 	decided5, ok5 := reg.Decided(gid, 5)

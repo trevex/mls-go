@@ -108,6 +108,12 @@ func (p *TreeKEMPrivate) privateKey(node uint32) ([]byte, bool) {
 	return k, ok
 }
 
+// PrivateKeyAt returns the HPKE private key held for the given array node index.
+func (p *TreeKEMPrivate) PrivateKeyAt(node uint32) ([]byte, bool) {
+	k, ok := p.privs[node]
+	return k, ok
+}
+
 // installPath blanks the sender's full direct path, installs the new public keys
 // for its filtered direct path (with empty unmerged_leaves), and assigns parent
 // hashes top-down (RFC 9420 §7.5 step 1-2 + §7.9.1). nodePubs[k] is the new

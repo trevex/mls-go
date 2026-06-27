@@ -28,7 +28,12 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          packages = [ go ];
+          packages = [
+            go
+            pkgs.protobuf
+            pkgs.protoc-gen-go
+            pkgs.protoc-gen-go-grpc
+          ];
 
           # Use the Nix-provided toolchain; never auto-download another one.
           GOTOOLCHAIN = "local";

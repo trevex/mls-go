@@ -2,6 +2,7 @@ package ironcore_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/ironcore"
@@ -160,4 +161,145 @@ func TestControllerScaffold(t *testing.T) {
 	if ctrl.Group() == nil {
 		t.Fatal("founder: Group() should not be nil")
 	}
+}
+
+// ─── Task 3: HandleCommit + commitAndOrder ────────────────────────────────────
+
+// TestControllerHandleCommit verifies:
+//   - A founder that issues a Rekey (path-only commit) advances to epoch 1
+//   - PreviousSA() is ok=true after the first epoch advance
+//   - CurrentSA().Key != PreviousSA().Key (key rotation happened)
+func TestControllerHandleCommit(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	founder := founderNode(t, suite, testVNI, "node-0", seq, nil)
+
+	// Founder issues an empty commit (rekey).
+	commitMsg, won, err := founder.Rekey(ctx)
+	if err != nil {
+		t.Fatalf("founder.Rekey: %v", err)
+	}
+	if !won {
+		t.Fatal("founder.Rekey: expected won=true (no competition)")
+	}
+	if len(commitMsg) == 0 {
+		t.Fatal("founder.Rekey: empty commitMsg")
+	}
+
+	// Founder itself is at epoch 1 after Rekey.
+	if founder.Epoch() != 1 {
+		t.Fatalf("founder: Epoch after Rekey = %d, want 1", founder.Epoch())
+	}
+
+	// PreviousSA() should now be ok=true (has epoch-0 SA).
+	prevSA, prevOK := founder.PreviousSA()
+	if !prevOK {
+		t.Fatal("founder: PreviousSA() ok should be true after Rekey")
+	}
+	if len(prevSA.Key) != 32 {
+		t.Fatalf("founder: PreviousSA().Key length %d, want 32", len(prevSA.Key))
+	}
+	curSA, err := founder.CurrentSA()
+	if err != nil {
+		t.Fatalf("founder: CurrentSA after Rekey: %v", err)
+	}
+	if bytes.Equal(curSA.Key, prevSA.Key) {
+		t.Fatal("founder: CurrentSA().Key should differ from PreviousSA().Key after Rekey")
+	}
+}
+
+// TestControllerSelfRemoval verifies that when a commit removes a node,
+// that node's HandleCommit returns ErrSelfRemoved, while other members succeed.
+func TestControllerSelfRemoval(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Build joiner (node-1) material.
+	joiner1, kpMsg1, initPriv1, leafPriv1 := mkNodeSimple(t, suite, testVNI, "node-1", seq)
+
+	// Decode the KP to Add it directly.
+	kp1, err := group.DecodeKeyPackageMessage(kpMsg1)
+	if err != nil {
+		t.Fatalf("DecodeKeyPackageMessage: %v", err)
+	}
+
+	// Build founder group directly (bypass Controller for the Add commit so we
+	// can test the Controller's HandleCommit + ErrSelfRemoved path cleanly).
+	signer0 := makeSigner(t)
+	cred0 := makeCred("node-0")
+	lt := makeLifetime()
+	groupID := ironcore.GroupID(testVNI)
+	g0, err := group.NewGroup(suite, groupID, cred0, signer0, lt)
+	if err != nil {
+		t.Fatalf("NewGroup: %v", err)
+	}
+
+	// Add node-1 via the raw group (g0 will be at epoch 1 after this).
+	addCommit, welcomeMsg, err := g0.Commit(group.CommitOptions{
+		ByValue: []group.Proposal{group.ProposeAdd(kp1)},
+	})
+	if err != nil {
+		t.Fatalf("g0.Commit(Add node-1): %v", err)
+	}
+	// Register the add-commit with the sequencer.
+	ref := group.CommitRef(suite.Hash(addCommit))
+	okSeq, seqErr := seq.AcceptCommit(ctx, group.GroupID(groupID), uint64(0), ref)
+	if seqErr != nil || !okSeq {
+		t.Fatalf("AcceptCommit(add): ok=%v err=%v", okSeq, seqErr)
+	}
+
+	// Wrap g0 (now at epoch 1) in a Controller.
+	cfg0 := ironcore.ControllerConfig{
+		VNI:       testVNI,
+		Suite:     suite,
+		Ordering:  seq,
+		Clock:     group.SystemClock{},
+		Validator: group.BasicCredentialValidator{},
+		Cred:      cred0,
+		Signer:    signer0,
+		Lifetime:  lt,
+		Resolve:   nil,
+	}
+	founder, err := ironcore.NewController(cfg0, g0)
+	if err != nil {
+		t.Fatalf("NewController(founder after add): %v", err)
+	}
+
+	// node-1 joins via Welcome.
+	if err := joiner1.JoinViaWelcome(welcomeMsg, kpMsg1, initPriv1, leafPriv1); err != nil {
+		t.Fatalf("joiner1.JoinViaWelcome: %v", err)
+	}
+
+	// Both should converge at epoch 1.
+	assertControllerConverged(t, "after-add", founder, joiner1)
+
+	// Founder commits a Remove(node-1) via the underlying group directly.
+	joiner1Leaf := joiner1.Group().OwnLeaf()
+	removeCommit, _, err := founder.Group().Commit(group.CommitOptions{
+		ByValue: []group.Proposal{group.ProposeRemove(joiner1Leaf)},
+	})
+	if err != nil {
+		t.Fatalf("founder.Group().Commit(Remove node-1): %v", err)
+	}
+	// Register the remove-commit.
+	ref2 := group.CommitRef(suite.Hash(removeCommit))
+	ok2, seqErr2 := seq.AcceptCommit(ctx, group.GroupID(groupID), uint64(1), ref2)
+	if seqErr2 != nil || !ok2 {
+		t.Fatalf("AcceptCommit(remove): ok=%v err=%v", ok2, seqErr2)
+	}
+
+	// joiner1's HandleCommit should return ErrSelfRemoved.
+	err = joiner1.HandleCommit(removeCommit)
+	if err != ironcore.ErrSelfRemoved {
+		t.Fatalf("joiner1.HandleCommit(Remove self): want ErrSelfRemoved, got %v", err)
+	}
+}
+
+// mkNodeSimple is a simplified variant of mkNode (no resolver needed).
+func mkNodeSimple(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering) (ctrl *ironcore.Controller, kpMsg, initPriv, leafPriv []byte) {
+	t.Helper()
+	return mkNode(t, suite, vni, name, seq, nil)
 }

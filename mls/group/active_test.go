@@ -235,10 +235,11 @@ func TestActiveRoundTrip(t *testing.T) {
 			assertConverged(t, "T4", suite, alice, bob)
 
 			// ── T5: Bob generates an Update proposal; Alice commits it ─────────
-			// Bob tracks the new leaf private key so he can decrypt Alice's
-			// UpdatePath after his leaf is updated in the working tree.
+			// Atomic pending-update: no manual key install needed — the engine
+			// tracks the pending key in g.pendingUpdates and swaps it into g.priv
+			// atomically inside ProcessCommit after confirmation_tag verifies.
 
-			updateProp, bobNewLeafPriv, err := bob.ProposeUpdate()
+			updateProp, err := bob.ProposeUpdate()
 			if err != nil {
 				t.Fatalf("T5 Bob.ProposeUpdate: %v", err)
 			}
@@ -252,9 +253,6 @@ func TestActiveRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("T5 Alice.Commit(Update Bob by-ref): %v", err)
 			}
-			// Install Bob's new leaf key before ProcessCommit (RFC 9420 §12.1.2 /
-			// plan N3 proposer-key-install).
-			bob.InstallPendingUpdateKey(bobNewLeafPriv)
 			if err := bob.ProcessCommit([][]byte{updateMsg}, commitMsg5); err != nil {
 				t.Fatalf("T5 Bob.ProcessCommit: %v", err)
 			}

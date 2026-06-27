@@ -257,6 +257,9 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	g.secretTree = st
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
 	g.appGeneration = 0
+	// Clear pending updates — committer always rekeys its own leaf via
+	// GenerateUpdatePath, so any pending updates from ProposeUpdate are moot.
+	g.pendingUpdates = map[string][]byte{}
 
 	return commitBytes, welcomeBytes, nil
 }

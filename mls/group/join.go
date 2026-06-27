@@ -214,5 +214,6 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		signer:               opt.Signer,
 		externalPSKs:         opt.ExternalPSKs,
 		resumptionPSKHistory: rpsks,
+		pendingUpdates:       map[string][]byte{},
 	}, nil
 }

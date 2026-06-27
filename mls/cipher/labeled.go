@@ -2,6 +2,9 @@ package cipher
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/hpke"
 	"encoding/binary"
 	"fmt"
@@ -79,6 +82,28 @@ func (s Suite) labeledContext(label string, data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return append(lbl, body...), nil
+}
+
+// SignaturePublicKey serializes signer's public key in the suite's
+// SignaturePublicKey encoding (RFC 9420 §5.1.2): Ed25519 raw 32 bytes;
+// ECDSA-P256 the uncompressed SEC1 point. The bytes are what VerifyWithLabel expects.
+func (s Suite) SignaturePublicKey(signer crypto.Signer) ([]byte, error) {
+	switch s.Sig {
+	case SigEd25519:
+		pub, ok := signer.Public().(ed25519.PublicKey)
+		if !ok {
+			return nil, errUnsupportedScheme
+		}
+		return append([]byte(nil), pub...), nil
+	case SigECDSAP256:
+		pub, ok := signer.Public().(*ecdsa.PublicKey)
+		if !ok {
+			return nil, errUnsupportedScheme
+		}
+		return elliptic.Marshal(elliptic.P256(), pub.X, pub.Y), nil //nolint:staticcheck — matches ParseUncompressedPublicKey in verifyClassical
+	default:
+		return nil, errUnsupportedScheme
+	}
 }
 
 // SignWithLabel signs content under the labeled scheme (RFC 9420 §5.1.2).

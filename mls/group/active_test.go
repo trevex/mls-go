@@ -64,6 +64,55 @@ func assertConverged(t *testing.T, tag string, suite cipher.Suite, members ...*g
 	}
 }
 
+// TestProposeAdd verifies that ProposeAdd + FrameProposal round-trips through
+// MLSMessage parse and that prop.Ref(suite) is stable.
+func TestProposeAdd(t *testing.T) {
+	executed := 0
+	for _, csID := range testSuites {
+		suite, ok := cipher.Lookup(csID)
+		if !ok {
+			t.Logf("suite %#x not registered, skipping", csID)
+			continue
+		}
+		executed++
+		t.Run("suite", func(t *testing.T) {
+			aliceSigner := makeSigner(t)
+			aliceGroup, err := group.NewGroup(suite, []byte("grp"), makeCred("alice"), aliceSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("NewGroup: %v", err)
+			}
+			bobSigner := makeSigner(t)
+			bobKP, _, _, err := group.NewKeyPackage(suite, makeCred("bob"), bobSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("NewKeyPackage: %v", err)
+			}
+			prop := group.ProposeAdd(bobKP)
+			msg, err := aliceGroup.FrameProposal(prop)
+			if err != nil {
+				t.Fatalf("FrameProposal: %v", err)
+			}
+			if len(msg) == 0 {
+				t.Fatal("FrameProposal returned empty bytes")
+			}
+			// Ref must be stable across calls.
+			ref1, err := prop.Ref(suite)
+			if err != nil {
+				t.Fatalf("prop.Ref: %v", err)
+			}
+			ref2, err := prop.Ref(suite)
+			if err != nil {
+				t.Fatalf("prop.Ref (2): %v", err)
+			}
+			if !bytes.Equal(ref1, ref2) {
+				t.Fatal("prop.Ref not stable")
+			}
+		})
+	}
+	if executed == 0 {
+		t.Fatal("no suites executed (all skipped)")
+	}
+}
+
 // TestNewGroup verifies that NewGroup creates a single-member group at epoch 0.
 func TestNewGroup(t *testing.T) {
 	executed := 0

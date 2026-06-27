@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
 	"github.com/trevex/mls-mlkem-go/mls/tree"
 )
 
@@ -55,6 +56,115 @@ func TestKeyPackageRoundTrip(t *testing.T) {
 	if !bytes.Equal(raw, raw2) {
 		t.Fatalf("round-trip mismatch:\n  first:  %x\n  second: %x", raw, raw2)
 	}
+}
+
+func proposalRoundTrip(t *testing.T, p Proposal) {
+	t.Helper()
+	raw, err := p.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+	var p2 Proposal
+	if err := p2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+	raw2, err := p2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("round-trip mismatch:\n  first:  %x\n  second: %x", raw, raw2)
+	}
+}
+
+func TestProposalAddRoundTrip(t *testing.T) {
+	kp := minimalKeyPackage()
+	proposalRoundTrip(t, Proposal{Type: ProposalTypeAdd, Add: &Add{KeyPackage: kp}})
+}
+
+func TestProposalUpdateRoundTrip(t *testing.T) {
+	ln := minimalLeafNode()
+	proposalRoundTrip(t, Proposal{Type: ProposalTypeUpdate, Update: &Update{LeafNode: ln}})
+}
+
+func TestProposalRemoveRoundTrip(t *testing.T) {
+	proposalRoundTrip(t, Proposal{Type: ProposalTypeRemove, Remove: &Remove{Removed: 42}})
+}
+
+func TestProposalPreSharedKeyRoundTrip(t *testing.T) {
+	psk := keyschedule.PreSharedKeyID{
+		PSKType:  keyschedule.PSKTypeExternal,
+		PSKID:    []byte("mypsk"),
+		PSKNonce: []byte("nonce"),
+	}
+	proposalRoundTrip(t, Proposal{Type: ProposalTypePreSharedKey, PreSharedKey: &PreSharedKey{PSK: psk}})
+}
+
+func TestProposalReInitRoundTrip(t *testing.T) {
+	proposalRoundTrip(t, Proposal{
+		Type: ProposalTypeReInit,
+		ReInit: &ReInit{
+			GroupID:     []byte("gid"),
+			Version:     tree.ProtocolVersionMLS10,
+			CipherSuite: cipher.X25519_AES128GCM_SHA256_Ed25519,
+			Extensions:  nil,
+		},
+	})
+}
+
+func TestProposalExternalInitRoundTrip(t *testing.T) {
+	proposalRoundTrip(t, Proposal{Type: ProposalTypeExternalInit, ExternalInit: &ExternalInit{KemOutput: []byte{0x01, 0x02}}})
+}
+
+func TestProposalGroupContextExtensionsRoundTrip(t *testing.T) {
+	proposalRoundTrip(t, Proposal{
+		Type:                   ProposalTypeGroupContextExtensions,
+		GroupContextExtensions: &GroupContextExtensions{Extensions: nil},
+	})
+}
+
+func TestProposalRefLength(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	if !ok {
+		t.Fatal("suite not found")
+	}
+	p := Proposal{Type: ProposalTypeRemove, Remove: &Remove{Removed: 2}}
+	ref, err := p.Ref(suite)
+	if err != nil {
+		t.Fatalf("Ref: %v", err)
+	}
+	if len(ref) != suite.HashLen() {
+		t.Fatalf("Ref length %d, want %d", len(ref), suite.HashLen())
+	}
+}
+
+func proposalOrRefRoundTrip(t *testing.T, por ProposalOrRef) {
+	t.Helper()
+	raw, err := por.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+	var por2 ProposalOrRef
+	if err := por2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+	raw2, err := por2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("round-trip mismatch:\n  first:  %x\n  second: %x", raw, raw2)
+	}
+}
+
+func TestProposalOrRefByValue(t *testing.T) {
+	p := Proposal{Type: ProposalTypeRemove, Remove: &Remove{Removed: 7}}
+	proposalOrRefRoundTrip(t, ProposalOrRef{Type: ProposalOrRefTypeProposal, Proposal: &p})
+}
+
+func TestProposalOrRefByReference(t *testing.T) {
+	ref := []byte{0xaa, 0xbb, 0xcc, 0xdd}
+	proposalOrRefRoundTrip(t, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 }
 
 func TestKeyPackageRefLength(t *testing.T) {

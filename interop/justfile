@@ -1,0 +1,24 @@
+# justfile for the mls-mlkem-go interop harness
+# Requires: just, nix (for the Go + protoc toolchain via `nix develop`)
+#
+# Usage from the repo root:
+#   cd interop && just gen   # re-generate protobuf stubs (needs protoc on PATH)
+#   cd interop && just test  # run the conformance gate
+#   cd interop && just run   # start the gRPC server on :50051
+
+# Re-generate the protobuf/gRPC stubs from mls_client.proto.
+# Requires protoc, protoc-gen-go, and protoc-gen-go-grpc on PATH.
+# Inside a nix devshell (`nix develop ../`) these are all available.
+gen:
+    protoc --proto_path=proto \
+      --go_out=proto/mlspb --go_opt=paths=source_relative \
+      --go-grpc_out=proto/mlspb --go-grpc_opt=paths=source_relative \
+      proto/mls_client.proto
+
+# Run all tests (including the conformance gate).
+test:
+    go test ./...
+
+# Start the interop gRPC server on the given port (default :50051).
+run port=":50051":
+    go run ./cmd/mls-interop -port {{port}}

@@ -179,6 +179,26 @@ func TestDeriveSAKeys(t *testing.T) {
 		t.Fatalf("SenderSalt not pairwise distinct: 0=%x 1=%x 2=%x", salts[0], salts[1], salts[2])
 	}
 
+	// (b2) Injectivity over a large leaf range: salts for 0..4095 must all be distinct.
+	// This proves the bijection guarantee — every distinct leaf → distinct salt.
+	const largeCount = 4096
+	saltSet := make(map[[4]byte]struct{}, largeCount)
+	for i := uint32(0); i < largeCount; i++ {
+		s, err := saAlice.SenderSalt(i)
+		if err != nil {
+			t.Fatalf("SenderSalt(%d): %v", i, err)
+		}
+		var k [4]byte
+		copy(k[:], s)
+		if _, dup := saltSet[k]; dup {
+			t.Fatalf("SenderSalt not injective: duplicate salt %x at leaf %d", s, i)
+		}
+		saltSet[k] = struct{}{}
+	}
+	if len(saltSet) != largeCount {
+		t.Fatalf("injectivity: expected %d distinct salts, got %d", largeCount, len(saltSet))
+	}
+
 	// (c) After a path-only commit (epoch++), Key and SPI both change; members still agree.
 	commitMsg, _, err := alice.Commit(group.CommitOptions{})
 	if err != nil {

@@ -60,7 +60,7 @@ func TestMultiNodeVNIScenario(t *testing.T) {
 			t.Fatalf("Epoch mismatch at node %d: node-0=%d node-%d=%d", i, saRef.Epoch, i, sa.Epoch)
 		}
 	}
-	t.Logf("Step 1: all %d nodes converge; Key=%x SPI=%#x Epoch=%d", n, saRef.Key[:8], saRef.SPI, saRef.Epoch)
+	t.Logf("Step 1: all %d nodes converge; SPI=%#x Epoch=%d", n, saRef.SPI, saRef.Epoch)
 
 	// Per-sender GCM nonce salts over all live leaf indices are pairwise distinct.
 	saltsSeen := map[string]uint32{}
@@ -156,8 +156,8 @@ func TestMultiNodeVNIScenario(t *testing.T) {
 			t.Fatalf("Epoch mismatch at node %d after join: node-0=%d node-%d=%d", i, saNew.Epoch, i, sa.Epoch)
 		}
 	}
-	t.Logf("Step 2: all %d nodes converge after join; Key=%x SPI=%#x Epoch=%d",
-		n+1, saNew.Key[:8], saNew.SPI, saNew.Epoch)
+	t.Logf("Step 2: all %d nodes converge after join; SPI=%#x Epoch=%d",
+		n+1, saNew.SPI, saNew.Epoch)
 
 	// ── Step 3: ESP-payload round-trip ────────────────────────────────────────
 	// node-0 encrypts (standing in for the ESP-protected data-plane payload);

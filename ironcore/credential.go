@@ -64,9 +64,13 @@ type PKIValidator struct {
 }
 
 // Validate implements group.CredentialValidator. It chain-verifies the leaf
-// certificate against v.Roots, then checks that the leaf public key matches
-// the MLS SignaturePublicKey sigPub. Returns the subject DN on success.
+// certificate against v.Roots (required; returns an error if nil), then checks
+// that the leaf public key matches the MLS SignaturePublicKey sigPub. Returns
+// the subject DN on success.
 func (v PKIValidator) Validate(cred tree.Credential, sigPub []byte) ([]byte, error) {
+	if v.Roots == nil {
+		return nil, fmt.Errorf("ironcore: PKIValidator requires a non-nil Roots trust bundle")
+	}
 	leaf, intermediates, err := parseChain(cred)
 	if err != nil {
 		return nil, err
@@ -86,28 +90,30 @@ func (v PKIValidator) Validate(cred tree.Credential, sigPub []byte) ([]byte, err
 
 // SPIFFEValidator validates an MLS x509 credential as a SPIFFE SVID (design
 // spec §8). It extracts the single spiffe:// URI SAN, checks the trust domain,
-// optionally chain-verifies, and returns the full SPIFFE ID as identity.
+// chain-verifies against Roots, and returns the full SPIFFE ID as identity.
 type SPIFFEValidator struct {
 	TrustDomain string         // expected trust domain, e.g. "example.org"; "" accepts any
-	Roots       *x509.CertPool // optional; if non-nil, the SVID chain is verified too
+	Roots       *x509.CertPool // required trust bundle; Validate returns an error if nil
 }
 
-// Validate implements group.CredentialValidator. It optionally chain-verifies
-// the SVID, checks the cert key matches sigPub, extracts the spiffe:// URI SAN,
-// and validates the trust domain. Returns the full SPIFFE ID on success.
+// Validate implements group.CredentialValidator. It chain-verifies the SVID
+// against v.Roots (required; returns an error if nil), checks the cert key
+// matches sigPub, extracts the spiffe:// URI SAN, and validates the trust
+// domain. Returns the full SPIFFE ID on success.
 func (v SPIFFEValidator) Validate(cred tree.Credential, sigPub []byte) ([]byte, error) {
+	if v.Roots == nil {
+		return nil, fmt.Errorf("ironcore: SPIFFEValidator requires a non-nil Roots trust bundle")
+	}
 	leaf, intermediates, err := parseChain(cred)
 	if err != nil {
 		return nil, err
 	}
-	if v.Roots != nil {
-		if _, err := leaf.Verify(x509.VerifyOptions{
-			Roots:         v.Roots,
-			Intermediates: intermediates,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		}); err != nil {
-			return nil, fmt.Errorf("ironcore: SVID chain verification failed: %w", err)
-		}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         v.Roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	}); err != nil {
+		return nil, fmt.Errorf("ironcore: SVID chain verification failed: %w", err)
 	}
 	if err := bindSignatureKey(leaf, sigPub); err != nil {
 		return nil, err

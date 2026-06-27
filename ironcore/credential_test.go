@@ -130,7 +130,7 @@ func TestPKIValidator(t *testing.T) {
 }
 
 // TestSPIFFEValidator exercises SPIFFEValidator: SPIFFE ID extraction, wrong
-// trust domain, missing SPIFFE SAN, and optional chain verification.
+// trust domain, missing SPIFFE SAN, chain verification, and nil-Roots rejection.
 func TestSPIFFEValidator(t *testing.T) {
 	caPriv, caPool, caDER := makeTestCA(t)
 	leafSigner := makeSigner(t)
@@ -140,8 +140,8 @@ func TestSPIFFEValidator(t *testing.T) {
 	leafDER := makeLeafCert(t, leafPub, spiffeURI, caDER, caPriv)
 	cred := makeX509Cred(leafDER)
 
-	// 1. Returns the SPIFFE ID as identity.
-	sv := ironcore.SPIFFEValidator{TrustDomain: "example.org"}
+	// 1. Returns the SPIFFE ID as identity (Roots required and provided).
+	sv := ironcore.SPIFFEValidator{TrustDomain: "example.org", Roots: caPool}
 	identity, err := sv.Validate(cred, sigPub)
 	if err != nil {
 		t.Fatalf("SPIFFEValidator.Validate: %v", err)
@@ -151,7 +151,7 @@ func TestSPIFFEValidator(t *testing.T) {
 	}
 
 	// 2. Fails for a wrong trust domain.
-	if _, err := (ironcore.SPIFFEValidator{TrustDomain: "evil.example"}).Validate(cred, sigPub); err == nil {
+	if _, err := (ironcore.SPIFFEValidator{TrustDomain: "evil.example", Roots: caPool}).Validate(cred, sigPub); err == nil {
 		t.Fatal("SPIFFEValidator: expected error for wrong trust domain, got nil")
 	}
 
@@ -161,10 +161,9 @@ func TestSPIFFEValidator(t *testing.T) {
 		t.Fatal("SPIFFEValidator: expected error for cert with no SPIFFE SAN, got nil")
 	}
 
-	// 4. With Roots set, chain-verifies successfully.
-	svWithRoots := ironcore.SPIFFEValidator{TrustDomain: "example.org", Roots: caPool}
-	if _, err := svWithRoots.Validate(cred, sigPub); err != nil {
-		t.Fatalf("SPIFFEValidator with Roots: %v", err)
+	// 4. Fails when Roots is nil (fail-closed: chain must always be verified).
+	if _, err := (ironcore.SPIFFEValidator{TrustDomain: "example.org"}).Validate(cred, sigPub); err == nil {
+		t.Fatal("SPIFFEValidator: expected error for nil Roots, got nil")
 	}
 
 	// 5. With Roots set to a wrong pool, chain verification fails.
@@ -172,5 +171,20 @@ func TestSPIFFEValidator(t *testing.T) {
 	svWrongRoots := ironcore.SPIFFEValidator{TrustDomain: "example.org", Roots: wrongPool}
 	if _, err := svWrongRoots.Validate(cred, sigPub); err == nil {
 		t.Fatal("SPIFFEValidator: expected error for wrong root pool, got nil")
+	}
+}
+
+// TestPKIValidatorNilRoots ensures PKIValidator fails closed when no trust
+// bundle is provided.
+func TestPKIValidatorNilRoots(t *testing.T) {
+	caPriv, _, caDER := makeTestCA(t)
+	leafSigner := makeSigner(t)
+	leafPub := leafSigner.Public().(ed25519.PublicKey)
+	sigPub := []byte(leafPub)
+	leafDER := makeLeafCert(t, leafPub, "", caDER, caPriv)
+	cred := makeX509Cred(leafDER)
+
+	if _, err := (ironcore.PKIValidator{}).Validate(cred, sigPub); err == nil {
+		t.Fatal("PKIValidator: expected error for nil Roots, got nil")
 	}
 }

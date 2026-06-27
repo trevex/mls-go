@@ -17,13 +17,14 @@ const (
 // SA is one IronCore ESP security association derived from an MLS epoch
 // (design spec §10.4). It feeds the dpservice/metalnet XFRM data plane.
 type SA struct {
-	VNI     uint32 // the VNI this SA protects
-	Epoch   uint64 // the MLS epoch it was derived from
-	SPI     uint32 // ESP SPI (epoch-encoded; > 255)
-	Key     []byte // K_group: 32-byte AES-256-GCM group key
-	OwnLeaf uint32 // this member's leaf index
-	OwnSalt []byte // 4-byte GCM nonce salt for this member's own sender nonce space
-	suite   cipher.Suite
+	VNI      uint32 // the VNI this SA protects
+	Epoch    uint64 // the MLS epoch it was derived from
+	SPI      uint32 // ESP SPI (epoch-encoded; > 255)
+	Key      []byte // K_group: 32-byte AES-256-GCM group key
+	OwnLeaf  uint32 // this member's leaf index
+	OwnSalt  []byte // 4-byte GCM nonce salt for this member's own sender nonce space
+	saltMask []byte // per-epoch 4-byte mask: SenderSalt(leaf) = saltMask XOR BE32(leaf)
+	suite    cipher.Suite
 }
 
 // saContext encodes VNI‖epoch as a 12-byte context for MLS-Exporter and
@@ -51,16 +52,22 @@ func deriveSPI(suite cipher.Suite, kGroup []byte, vni uint32, epoch uint64) (uin
 	return spi, nil
 }
 
-// SenderSalt derives the 4-byte RFC 4106 AES-GCM-ESP nonce salt for sender
-// leafIndex (design spec §10.4 "GCM nonce safety"). Each sender gets a
-// disjoint nonce space: nonce = SenderSalt(leaf) ‖ IV(8), so two senders
-// never collide regardless of their ESP sequence numbers.
+// SenderSalt returns the 4-byte RFC 4106 AES-GCM-ESP nonce salt for sender
+// leafIndex (design spec §10.4 "GCM nonce safety"). The salt is computed as
+// saltMask XOR BE32(leafIndex), where saltMask is a per-epoch constant derived
+// once in DeriveSAKeys. XOR with a constant is a bijection: distinct leaf
+// indices always produce distinct salts (guaranteed injective, not merely
+// probabilistic). Each sender therefore gets a guaranteed-disjoint nonce space:
+// nonce = SenderSalt(leaf) ‖ IV(8).
 func (sa SA) SenderSalt(leafIndex uint32) ([]byte, error) {
-	ctx := make([]byte, 4)
-	binary.BigEndian.PutUint32(ctx, leafIndex)
-	salt, err := sa.suite.ExpandWithLabel(sa.Key, "esp-sender", ctx, saSaltLen)
-	if err != nil {
-		return nil, fmt.Errorf("ironcore: derive sender salt: %w", err)
+	if len(sa.saltMask) != saSaltLen {
+		return nil, fmt.Errorf("ironcore: SA saltMask not initialized (use DeriveSAKeys)")
+	}
+	leaf := make([]byte, saSaltLen)
+	binary.BigEndian.PutUint32(leaf, leafIndex)
+	salt := make([]byte, saSaltLen)
+	for i := range salt {
+		salt[i] = sa.saltMask[i] ^ leaf[i]
 	}
 	return salt, nil
 }
@@ -83,6 +90,12 @@ func DeriveSAKeys(g *group.Group, vni uint32) (SA, error) {
 		return SA{}, err
 	}
 	sa := SA{VNI: vni, Epoch: epoch, SPI: spi, Key: kGroup, OwnLeaf: g.OwnLeaf(), suite: suite}
+	// Derive the per-epoch salt mask once. SenderSalt(leaf) = saltMask XOR BE32(leaf),
+	// which is injective in leaf: two distinct leaves can never produce the same salt.
+	sa.saltMask, err = suite.ExpandWithLabel(kGroup, "esp-salt-mask", nil, saSaltLen)
+	if err != nil {
+		return SA{}, fmt.Errorf("ironcore: derive salt mask: %w", err)
+	}
 	if sa.OwnSalt, err = sa.SenderSalt(g.OwnLeaf()); err != nil {
 		return SA{}, err
 	}

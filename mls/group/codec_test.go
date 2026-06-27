@@ -2,6 +2,7 @@ package group
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
@@ -228,5 +229,116 @@ func TestKeyPackageRefLength(t *testing.T) {
 	}
 	if len(ref) != suite.HashLen() {
 		t.Fatalf("Ref length %d, want %d", len(ref), suite.HashLen())
+	}
+}
+
+func minimalGroupContext() keyschedule.GroupContext {
+	return keyschedule.GroupContext{
+		Version:                 tree.ProtocolVersionMLS10,
+		CipherSuite:             cipher.X25519_AES128GCM_SHA256_Ed25519,
+		GroupID:                 []byte("test-group"),
+		Epoch:                   0,
+		TreeHash:                []byte{0x01, 0x02},
+		ConfirmedTranscriptHash: []byte{0x03, 0x04},
+		Extensions:              nil,
+	}
+}
+
+func TestGroupInfoRoundTrip(t *testing.T) {
+	gi := GroupInfo{
+		GroupContext: minimalGroupContext(),
+		Extensions: []tree.Extension{
+			{ExtensionType: 0x0002, ExtensionData: []byte("ratchet_tree_data")},
+		},
+		ConfirmationTag: []byte{0xaa, 0xbb},
+		Signer:          0,
+		Signature:       []byte{0xde, 0xad, 0xbe, 0xef},
+	}
+
+	raw, err := gi.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+
+	var gi2 GroupInfo
+	if err := gi2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+
+	raw2, err := gi2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("round-trip mismatch:\n  first:  %x\n  second: %x", raw, raw2)
+	}
+}
+
+func TestGroupInfoSignVerify(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	if !ok {
+		t.Fatal("suite not found")
+	}
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	gi := GroupInfo{
+		GroupContext:    minimalGroupContext(),
+		Extensions:      nil,
+		ConfirmationTag: []byte{0x01},
+		Signer:          0,
+	}
+
+	if err := gi.Sign(suite, priv); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	ok2, err := gi.VerifySignature(suite, []byte(pub))
+	if err != nil {
+		t.Fatalf("VerifySignature: %v", err)
+	}
+	if !ok2 {
+		t.Fatal("VerifySignature returned false, want true")
+	}
+
+	// Flip a byte in the signature to check false negative.
+	gi.Signature[0] ^= 0xff
+	ok3, err := gi.VerifySignature(suite, []byte(pub))
+	if err != nil {
+		t.Fatalf("VerifySignature (flipped): %v", err)
+	}
+	if ok3 {
+		t.Fatal("VerifySignature returned true after byte flip, want false")
+	}
+}
+
+func TestGroupInfoRatchetTreeExtension(t *testing.T) {
+	data := []byte("tree_bytes")
+	gi := GroupInfo{
+		GroupContext:    minimalGroupContext(),
+		Extensions:      []tree.Extension{{ExtensionType: 0x0002, ExtensionData: data}},
+		ConfirmationTag: []byte{0x01},
+		Signer:          0,
+		Signature:       []byte{0x02},
+	}
+
+	got := gi.RatchetTreeExtension()
+	if !bytes.Equal(got, data) {
+		t.Fatalf("RatchetTreeExtension = %x, want %x", got, data)
+	}
+
+	gi2 := GroupInfo{
+		GroupContext:    minimalGroupContext(),
+		Extensions:      nil,
+		ConfirmationTag: []byte{0x01},
+		Signer:          0,
+		Signature:       []byte{0x02},
+	}
+	if gi2.RatchetTreeExtension() != nil {
+		t.Fatal("expected nil for missing ratchet_tree extension")
 	}
 }

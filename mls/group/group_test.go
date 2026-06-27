@@ -152,8 +152,8 @@ func TestApplyProposals(t *testing.T) {
 	}
 
 	cache := make(map[string]cachedProposal)
-	provisionalExt, psks, pathRequired, err := applyProposals(
-		suite, rt, cm, cache, nil, nil, 0,
+	provisionalExt, psks, pathRequired, _, err := applyProposals(
+		suite, rt, cm, cache, nil, nil, nil, nil, 0,
 	)
 	if err != nil {
 		t.Fatalf("applyProposals: %v", err)

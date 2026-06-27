@@ -22,6 +22,10 @@ type Group struct {
 	ownLeaf      uint32
 	signer       crypto.Signer     // own signing key (for generating; nil for pure receiver)
 	externalPSKs map[string][]byte // psk_id (string) -> psk secret for external PSKs
+	// resumptionPSKHistory holds the resumption_psk for each epoch the group has
+	// been in. Keyed by epoch number. Populated at join and after each commit so
+	// that PSK proposals in future commits can be resolved (RFC 9420 §8.4).
+	resumptionPSKHistory map[uint64][]byte
 }
 
 // Epoch returns the current epoch number.

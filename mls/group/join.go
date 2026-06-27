@@ -197,17 +197,22 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 
 	// N1 step 13: epoch_authenticator = es.EpochAuthenticator — verified to equal
 	// initial_epoch_authenticator for all 16 registered-suite KAT cases.
+	//
+	// Seed the resumption PSK history with the joined epoch so that ProcessCommit
+	// can resolve resumption PSK proposals that reference this epoch (RFC 9420 §8.4).
+	rpsks := map[uint64][]byte{gi.GroupContext.Epoch: es.ResumptionPSK}
 	return &Group{
-		suite:        suite,
-		groupContext: gi.GroupContext,
-		tree:         rt,
-		priv:         priv,
-		epoch:        es,
-		secretTree:   st,
-		interim:      interim,
-		initSecret:   es.InitSecret,
-		ownLeaf:      ownLeaf,
-		signer:       opt.Signer,
-		externalPSKs: opt.ExternalPSKs,
+		suite:                suite,
+		groupContext:         gi.GroupContext,
+		tree:                 rt,
+		priv:                 priv,
+		epoch:                es,
+		secretTree:           st,
+		interim:              interim,
+		initSecret:           es.InitSecret,
+		ownLeaf:              ownLeaf,
+		signer:               opt.Signer,
+		externalPSKs:         opt.ExternalPSKs,
+		resumptionPSKHistory: rpsks,
 	}, nil
 }

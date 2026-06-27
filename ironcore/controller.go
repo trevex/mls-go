@@ -429,9 +429,11 @@ func (c *Controller) identityToLeaf() (map[string]uint32, error) {
 		identity, err := c.cfg.Validator.Validate(cred, sigPub)
 		if err != nil {
 			// Validation failure means we can't map this leaf to an identity.
-			// Skip it (it will be treated as "not in desired" if desired doesn't
-			// include it, which is correct — the control plane won't want an
-			// unknown member).
+			// The leaf is INVISIBLE to both the add and remove paths: it never
+			// enters idToLeaf so it cannot appear in removeSet and therefore
+			// cannot be evicted via Reconcile even if the control plane omits
+			// it from desired. A member with an unverifiable credential must be
+			// removed by a direct proposal rather than through Reconcile.
 			continue
 		}
 		m[string(identity)] = leaf

@@ -3,6 +3,7 @@ package ironcore_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -557,6 +558,7 @@ func TestControllerRekeyPCS(t *testing.T) {
 	if err := node1.HandleCommit(rekeyMsg2); err != nil {
 		t.Fatalf("node-1.HandleCommit(second rekey): %v", err)
 	}
+	assertControllerConverged(t, "gate3-post-second-rekey", node0, node1)
 
 	// Post-rekey SA ≠ stale SA of removed node-2 (PCS property §10.3).
 	postRemovalSA, err := node0.CurrentSA()
@@ -653,6 +655,8 @@ func TestControllerHandover(t *testing.T) {
 	if err := node2.HandleCommit(result1.CommitMsg); err != nil {
 		t.Fatalf("node-2.HandleCommit(handover): %v", err)
 	}
+	// Intermediate convergence: survivors agree at the post-removal epoch.
+	assertControllerConverged(t, "gate2-post-removal", node1, node2)
 
 	// IsCommitter() flips to node-1 (lowest active leaf is now 1).
 	if !node1.IsCommitter() {
@@ -835,4 +839,94 @@ func TestControllerAutoRecovery(t *testing.T) {
 	assertControllerConverged(t, "gate4-recovered", node0, node1)
 	t.Logf("Gate4: fork recovered — node-0 and node-1 converged at epoch %d, EA=%x",
 		node0.Epoch(), node0.Group().EpochAuthenticator())
+}
+
+// ─── Gate 4 extended: ErrLostRace→AutoRecover through the Controller API ──────
+
+// TestControllerLostRaceAutoRecover proves the DoD Gate-4 claim
+// ("the losing committer detects ErrLostRace and AutoRecovers") through the
+// public Controller API surface.
+//
+// Construction: two 1-member founder controllers share the SAME VNI (GroupID)
+// and the SAME sequencer — simulating two nodes that raced to commit at epoch 0.
+// Both are IsCommitter()==true (each is the sole member of its own founder
+// group). The winner calls Rekey() first, claiming the epoch-0 slot. The loser
+// then calls Reconcile() which internally invokes commitAndOrder → AcceptCommit
+// (gid, 0, …) → ok=false (already decided) and returns ErrLostRace with
+// result.Won==false. The loser then AutoRecovers via external commit onto the
+// winner's branch; the winner processes the recovery commit; both converge.
+func TestControllerLostRaceAutoRecover(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Pre-generate a joiner KP so the loser has a concrete Add proposal to put
+	// through commitAndOrder. The joiner is never actually added (the loser loses
+	// the race), but its KP drives the real commitAndOrder code path.
+	_, joinerKPMsg, _, _ := mkNode(t, suite, testVNI, "joiner", seq, nil)
+	joinerResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		if string(identity) == "joiner" {
+			return joinerKPMsg, true
+		}
+		return nil, false
+	})
+
+	// Both winner and loser are 1-member founders at epoch 0 with the SAME groupID.
+	// Both are IsCommitter()==true; only one can win the epoch-0 slot.
+	winner := founderNode(t, suite, testVNI, "winner", seq, nil)
+	loser := founderNode(t, suite, testVNI, "loser", seq, joinerResolver)
+
+	// Step 1 — winner claims epoch 0 via Rekey.
+	winnerCommit, won, err := winner.Rekey(ctx)
+	if err != nil || !won {
+		t.Fatalf("winner.Rekey: won=%v err=%v", won, err)
+	}
+	_ = winnerCommit // winner is now at epoch 1; commit not yet broadcast
+
+	// Step 2 — loser tries Reconcile(add "joiner") at the same epoch 0.
+	// Its commitAndOrder calls AcceptCommit(gid, 0, …) → ok=false (already
+	// decided by winner).  Reconcile must return ErrLostRace with Won==false.
+	// This is the production commitAndOrder path — NOT a direct sequencer call.
+	lostResult, lostErr := loser.Reconcile(ctx, [][]byte{[]byte("loser"), []byte("joiner")})
+	if !errors.Is(lostErr, ironcore.ErrLostRace) {
+		t.Fatalf("loser.Reconcile: want errors.Is(ErrLostRace), got %v", lostErr)
+	}
+	if lostResult.Won {
+		t.Fatalf("loser.Reconcile: result.Won want false, got true")
+	}
+	t.Logf("ErrLostRace confirmed through Reconcile→commitAndOrder (not via direct sequencer call)")
+
+	// Step 3 — retrieve the canonical branch information for recovery.
+	gid := group.GroupID(ironcore.GroupID(testVNI))
+	canonRef, found := seq.Decided(gid, 0)
+	if !found {
+		t.Fatal("sequencer: no decided ref for epoch 0")
+	}
+	gi, err := winner.PublishGroupInfo()
+	if err != nil {
+		t.Fatalf("winner.PublishGroupInfo: %v", err)
+	}
+
+	// Step 4 — loser AutoRecovers onto the canonical branch.
+	// AutoRecover calls RecoverViaExternalCommit which issues an external commit
+	// against the winner's GroupInfo and routes it through the ordering register.
+	recoveryMsg, err := loser.AutoRecover(ctx,
+		[]group.CommitRef{canonRef},
+		func(_ group.CommitRef) (*group.GroupInfo, error) { return gi, nil },
+	)
+	if err != nil {
+		t.Fatalf("loser.AutoRecover: %v", err)
+	}
+
+	// Step 5 — winner processes the loser's external-commit recovery, advancing
+	// to the recovered epoch.
+	if err := winner.HandleCommit(recoveryMsg); err != nil {
+		t.Fatalf("winner.HandleCommit(recovery): %v", err)
+	}
+
+	// Both must converge: byte-equal epoch_authenticator + SA.Key.
+	assertControllerConverged(t, "lost-race-recovered", winner, loser)
+	t.Logf("Gate4+: ErrLostRace→AutoRecover proven through Controller API; "+
+		"both converged at epoch %d, EA=%x",
+		winner.Epoch(), winner.Group().EpochAuthenticator())
 }

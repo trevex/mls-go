@@ -267,6 +267,13 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
 		return fmt.Errorf("group: ProcessCommit: commit is not a PublicMessage")
 	}
+
+	// Dispatch: new_member_commit (external joiner) is handled separately because
+	// the committer is not in the tree and uses the joiner's UpdatePath key for auth.
+	if m.Public.Content.Sender.Type == framing.SenderTypeNewMemberCommit {
+		return g.processExternalCommit(m)
+	}
+
 	committerLeaf := m.Public.Content.Sender.LeafIndex
 	committerLeafNode, err := g.tree.LeafNodeAt(committerLeaf)
 	if err != nil {

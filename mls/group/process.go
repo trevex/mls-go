@@ -170,6 +170,41 @@ func applyProposals(
 	return provisionalExt, psks, pathRequired, newlyAdded, nil
 }
 
+// resolveOwnUpdatePriv returns the pending leaf private key for an Update in cm
+// authored by g's own leaf, or nil if this commit does not apply such an Update.
+// It errors only if an own Update is committed but no pending key is tracked.
+func (g *Group) resolveOwnUpdatePriv(cm Commit, cache map[string]cachedProposal, committerLeaf uint32) ([]byte, error) {
+	for _, por := range cm.Proposals {
+		var prop Proposal
+		var sender uint32
+		switch por.Type {
+		case ProposalOrRefTypeProposal:
+			if por.Proposal == nil {
+				continue
+			}
+			prop, sender = *por.Proposal, committerLeaf
+		case ProposalOrRefTypeReference:
+			cp, ok := cache[string(por.Reference)]
+			if !ok {
+				continue // applyProposals will surface the missing-ref error
+			}
+			prop, sender = cp.proposal, cp.sender
+		default:
+			continue
+		}
+		if prop.Type != ProposalTypeUpdate || sender != g.ownLeaf || prop.Update == nil {
+			continue
+		}
+		pub := prop.Update.LeafNode.EncryptionKey
+		priv, ok := g.pendingUpdates[string(pub)]
+		if !ok {
+			return nil, fmt.Errorf("own Update committed but no pending leaf key tracked")
+		}
+		return priv, nil
+	}
+	return nil, nil
+}
+
 // ProcessCommit advances the group by one epoch, given the proposals delivered
 // before the commit (cached by reference) and the commit MLSMessage. It verifies
 // the commit's authentication and confirmation_tag and returns an error (leaving
@@ -277,6 +312,20 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		return fmt.Errorf("group: ProcessCommit: applyProposals: %w", err)
 	}
 
+	// Atomic pending-update swap: if this commit applies an Update authored by our
+	// own leaf, decrypt the UpdatePath with the pending leaf key (path secrets are
+	// encrypted to our NEW leaf pubkey after the Update is applied to the tree).
+	// g.priv is NOT mutated here — workingPriv is local until confirmation_tag
+	// verifies, so a superseded update leaves the old key usable.
+	ownUpdatePriv, err := g.resolveOwnUpdatePriv(cm, cache, committerLeaf)
+	if err != nil {
+		return fmt.Errorf("group: ProcessCommit: %w", err)
+	}
+	workingPriv := g.priv
+	if ownUpdatePriv != nil {
+		workingPriv = tree.NewTreeKEMPrivate(g.ownLeaf, ownUpdatePriv)
+	}
+
 	// N2 step 5 (transcript part, N5): Compute the provisional confirmed
 	// transcript hash from the commit's AuthenticatedContent.
 	// confirmed = Hash(interim[n-1] || wire_format || FramedContent || signature)
@@ -331,7 +380,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		// Decrypt the path secret using the pre-merge working tree + encGC.
 		// Pass newlyAdded so ProcessUpdatePath can correctly skip ciphertext slots
 		// for members whose Add proposal is in this same commit (RFC 9420 §7.5).
-		decryptedPS, commitSecret, err = wt.ProcessUpdatePath(committerLeaf, cm.Path, g.priv, encGCBytes, newlyAdded)
+		decryptedPS, commitSecret, err = wt.ProcessUpdatePath(committerLeaf, cm.Path, workingPriv, encGCBytes, newlyAdded)
 		if err != nil {
 			return fmt.Errorf("group: ProcessCommit: ProcessUpdatePath: %w", err)
 		}
@@ -394,7 +443,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	// The path secret lives at commonAncestor(2*ownLeaf, 2*committerLeaf).
 	var newPriv *tree.TreeKEMPrivate
 	if cm.Path != nil && decryptedPS != nil {
-		ownKey, ok := g.priv.PrivateKeyAt(2 * g.ownLeaf)
+		ownKey, ok := workingPriv.PrivateKeyAt(2 * g.ownLeaf)
 		if !ok {
 			return fmt.Errorf("group: ProcessCommit: own leaf private key missing")
 		}
@@ -403,7 +452,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 			return fmt.Errorf("group: ProcessCommit: installJoinerPriv: %w", installErr)
 		}
 	} else {
-		newPriv = g.priv
+		newPriv = workingPriv
 	}
 
 	// Build a new SecretTree from the fresh encryption_secret.
@@ -426,6 +475,9 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
 	// Reset per-epoch sender ratchet counter (RFC 9420 §9.1).
 	g.appGeneration = 0
+	// Clear pending updates on epoch change — any pending key from the old epoch
+	// is now either committed (and swapped into g.priv) or superseded.
+	g.pendingUpdates = map[string][]byte{}
 
 	return nil
 }

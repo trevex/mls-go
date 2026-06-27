@@ -32,6 +32,12 @@ type Group struct {
 	// appGeneration is the per-epoch, per-sender monotonic counter for application
 	// messages (RFC 9420 §9.1). It is reset to 0 on every epoch change.
 	appGeneration uint32
+	// pendingUpdates maps new-leaf-pubkey (string) → new-leaf-priv for Update
+	// proposals authored by this member but not yet committed.  ProcessCommit
+	// swaps the key into g.priv atomically, only after confirmation_tag verifies,
+	// so a superseded update leaves the old key intact (RFC 9420 §12.1.2).
+	// Cleared on every epoch change.
+	pendingUpdates map[string][]byte
 }
 
 // Epoch returns the current epoch number.

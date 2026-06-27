@@ -71,5 +71,6 @@ func NewGroup(suite cipher.Suite, groupID []byte, cred tree.Credential, signer c
 		signer:               signer,
 		externalPSKs:         map[string][]byte{},
 		resumptionPSKHistory: map[uint64][]byte{0: es0.ResumptionPSK},
+		pendingUpdates:       map[string][]byte{},
 	}, nil
 }

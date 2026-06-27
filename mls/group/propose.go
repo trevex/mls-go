@@ -24,25 +24,18 @@ func ProposeGroupContextExtensions(ext []tree.Extension) Proposal {
 }
 
 // ProposeUpdate generates a fresh leaf HPKE key and an update-source LeafNode
-// for g's own leaf, returning the proposal and the new leafPriv that the
-// proposer must install when this proposal is committed (RFC 9420 §12.1.2).
-//
-// NOTE: The proposer's new leaf_priv is not automatically installed when a
-// separate committer commits this Update by reference. Production callers must
-// track the returned leafPriv and call InstallPendingUpdateKey before
-// ProcessCommit when this proposal is committed. Note: InstallPendingUpdateKey
-// mutates the group's stored private key before ProcessCommit; if the committed
-// update is superseded by a competing commit, the old key is already gone.
-// Automatic, atomic pending-update tracking is planned for the
-// membership-controller integration.
-func (g *Group) ProposeUpdate() (Proposal, []byte, error) {
+// for g's own leaf (RFC 9420 §12.1.2). The new leaf private key is stored
+// atomically in g.pendingUpdates keyed by the new leaf public key. g.priv is
+// NOT mutated here — ProcessCommit will swap the pending key in only after the
+// confirmation_tag verifies, so a superseded update leaves the old key intact.
+func (g *Group) ProposeUpdate() (Proposal, error) {
 	leafPriv, leafPub, err := g.suite.GenerateHPKEKeyPair()
 	if err != nil {
-		return Proposal{}, nil, err
+		return Proposal{}, err
 	}
 	cur, err := g.tree.LeafNodeAt(g.ownLeaf)
 	if err != nil {
-		return Proposal{}, nil, err
+		return Proposal{}, err
 	}
 	ln := cur
 	ln.EncryptionKey = leafPub
@@ -50,21 +43,12 @@ func (g *Group) ProposeUpdate() (Proposal, []byte, error) {
 	ln.Lifetime = nil
 	ln.ParentHash = nil
 	if err := tree.SignLeafNode(g.suite, g.signer, &ln, g.groupContext.GroupID, g.ownLeaf); err != nil {
-		return Proposal{}, nil, err
+		return Proposal{}, err
 	}
-	return Proposal{Type: ProposalTypeUpdate, Update: &Update{LeafNode: ln}}, leafPriv, nil
-}
-
-// InstallPendingUpdateKey installs a new leaf private key that was returned by
-// a previous ProposeUpdate call, so that ProcessCommit can correctly decrypt
-// the UpdatePath path secrets (which are encrypted to the NEW leaf public key
-// after the Update proposal is applied to the tree). Must be called before
-// ProcessCommit when the caller's own pending Update is included in the commit.
-//
-// The ancestor keys in g.priv are discarded here; ProcessCommit will reinstall
-// them from the decrypted path secret via installJoinerPriv.
-func (g *Group) InstallPendingUpdateKey(newLeafPriv []byte) {
-	g.priv = tree.NewTreeKEMPrivate(g.ownLeaf, newLeafPriv)
+	// Store pending key by new leaf pubkey — atomic: ProcessCommit resolves this
+	// and swaps it into g.priv only after confirmation_tag verifies.
+	g.pendingUpdates[string(leafPub)] = leafPriv
+	return Proposal{Type: ProposalTypeUpdate, Update: &Update{LeafNode: ln}}, nil
 }
 
 // FrameProposal frames a bare Proposal as a member PublicMessage

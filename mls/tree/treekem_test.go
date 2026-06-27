@@ -159,7 +159,7 @@ func TestProcessUpdatePathScenario0(t *testing.T) {
 		}
 	}
 	rt, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
-	pathSecret, commit, err := rt.ProcessUpdatePath(up.Sender, &path, priv, gc)
+	pathSecret, commit, err := rt.ProcessUpdatePath(up.Sender, &path, priv, gc, nil)
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestGenerateUpdatePathRoundTripScenario0(t *testing.T) {
 		_ = priv.AddPathSecret(suite, ps.Node, hx(t, ps.PathSecret))
 	}
 	orig, _ := ParseRatchetTree(suite, hx(t, c.RatchetTree))
-	_, commit, err := orig.ProcessUpdatePath(up.Sender, newUP, priv, gc)
+	_, commit, err := orig.ProcessUpdatePath(up.Sender, newUP, priv, gc, nil)
 	if err != nil {
 		t.Fatalf("re-process: %v", err)
 	}

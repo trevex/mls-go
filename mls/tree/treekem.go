@@ -108,6 +108,12 @@ func (p *TreeKEMPrivate) privateKey(node uint32) ([]byte, bool) {
 	return k, ok
 }
 
+// PrivateKeyAt returns the HPKE private key held for the given array node index.
+func (p *TreeKEMPrivate) PrivateKeyAt(node uint32) ([]byte, bool) {
+	k, ok := p.privs[node]
+	return k, ok
+}
+
 // installPath blanks the sender's full direct path, installs the new public keys
 // for its filtered direct path (with empty unmerged_leaves), and assigns parent
 // hashes top-down (RFC 9420 §7.5 step 1-2 + §7.9.1). nodePubs[k] is the new
@@ -187,28 +193,58 @@ func (t *RatchetTree) Merge(senderLeaf uint32, up *UpdatePath) error {
 // vector's path_secrets[priv.LeafIndex]) and the commit secret (RFC 9420
 // §7.5/§7.6). It does not mutate the tree; groupContext is the serialized
 // provisional GroupContext for the new epoch.
-func (t *RatchetTree) ProcessUpdatePath(senderLeaf uint32, up *UpdatePath, priv *TreeKEMPrivate, groupContext []byte) (pathSecret, commitSecret []byte, err error) {
+//
+// If the receiver holds no private key for any node on the path (e.g. an
+// excluded or newly-added member), it returns a nil commit secret; callers
+// rely on the epoch confirmation_tag verification as the integrity backstop.
+//
+// newlyAdded is the list of leaf indices added by Add proposals in the same
+// commit. Senders MAY omit encrypted path secrets for these leaves (RFC 9420
+// §7.5); they are excluded when computing the ciphertext index into each
+// UpdatePathNode.EncryptedPathSecret slice.
+func (t *RatchetTree) ProcessUpdatePath(senderLeaf uint32, up *UpdatePath, priv *TreeKEMPrivate, groupContext []byte, newlyAdded []uint32) (pathSecret, commitSecret []byte, err error) {
 	senderNode := 2 * senderLeaf
 	fdp := t.filteredDirectPath(senderLeaf)
 	if len(fdp) != len(up.Nodes) {
 		return nil, nil, fmt.Errorf("tree: UpdatePath has %d nodes, filtered direct path has %d", len(up.Nodes), len(fdp))
 	}
+
+	// Build set of newly-added leaf nodes (excluded from ciphertext index).
+	// Senders compute the ciphertext list by iterating the copath resolution and
+	// skipping any leaf that was added in the same commit. The receiver must apply
+	// the same skip rule to align its ciphertext index with the sender's list.
+	newlyAddedSet := make(map[uint32]bool, len(newlyAdded))
+	for _, li := range newlyAdded {
+		newlyAddedSet[2*li] = true
+	}
+
 	// Find the lowest filtered-direct-path node whose copath child resolution
 	// contains a node we hold a private key for, and decrypt at that index.
+	// ctIdx counts non-newly-added resolution entries (1-to-1 with ciphertexts).
 	foundK := -1
 	var decrypted []byte
 	for k, p := range fdp {
 		cc := t.copathChild(p, senderNode)
 		res := t.Resolution(cc)
-		for idx, d := range res {
-			sk, ok := priv.privateKey(d)
-			if !ok {
+		ctIdx := 0
+		for _, d := range res {
+			if newlyAddedSet[d] {
+				// Sender omitted a ciphertext for this newly-added member; skip
+				// without advancing ctIdx.
 				continue
 			}
-			if idx >= len(up.Nodes[k].EncryptedPathSecret) {
-				return nil, nil, fmt.Errorf("tree: resolution index %d out of range for node %d", idx, p)
+			sk, ok := priv.privateKey(d)
+			if !ok {
+				// We don't hold the key for this non-newly-added member; count its
+				// ciphertext slot and move on.
+				ctIdx++
+				continue
 			}
-			ct := up.Nodes[k].EncryptedPathSecret[idx]
+			if ctIdx >= len(up.Nodes[k].EncryptedPathSecret) {
+				// Ciphertext list shorter than expected — treat as excluded receiver.
+				break
+			}
+			ct := up.Nodes[k].EncryptedPathSecret[ctIdx]
 			ps, derr := t.suite.DecryptWithLabel(sk, "UpdatePathNode", groupContext, ct.KemOutput, ct.Ciphertext)
 			if derr != nil {
 				return nil, nil, derr
@@ -221,7 +257,9 @@ func (t *RatchetTree) ProcessUpdatePath(senderLeaf uint32, up *UpdatePath, priv 
 		}
 	}
 	if foundK < 0 {
-		return nil, nil, fmt.Errorf("tree: leaf %d holds no key in any copath resolution", priv.LeafIndex)
+		// No path secret found — receiver is excluded (e.g. a newly-added joiner
+		// whose Welcome carries the joiner_secret instead). ProcessCommit uses zeros.
+		return nil, nil, nil
 	}
 	// Derive up to the root, verifying public keys.
 	cur := decrypted

@@ -157,7 +157,7 @@ func TestTreeKEMKAT(t *testing.T) {
 						t.Fatalf("up %d: leaf %d has expected secret but no private state", ui, leaf)
 					}
 					rt, _ := tree.ParseRatchetTree(suite, sc.RatchetTree)
-					ps, commit, err := rt.ProcessUpdatePath(up.Sender, &path, priv, gc)
+					ps, commit, err := rt.ProcessUpdatePath(up.Sender, &path, priv, gc, nil)
 					if err != nil {
 						t.Fatalf("up %d leaf %d: process: %v", ui, leaf, err)
 					}
@@ -194,7 +194,7 @@ func TestTreeKEMKAT(t *testing.T) {
 						continue
 					}
 					rt, _ := tree.ParseRatchetTree(suite, sc.RatchetTree)
-					_, commit, err := rt.ProcessUpdatePath(up.Sender, newUP, priv, genGC)
+					_, commit, err := rt.ProcessUpdatePath(up.Sender, newUP, priv, genGC, nil)
 					if err != nil {
 						t.Fatalf("up %d leaf %d: re-process generated: %v", ui, leaf, err)
 					}

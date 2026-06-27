@@ -1,11 +1,13 @@
 package group_test
 
 import (
+	"crypto"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
 	"github.com/trevex/mls-mlkem-go/mls/framing"
 	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
 	"github.com/trevex/mls-mlkem-go/mls/tree"
 )
 
@@ -254,6 +256,248 @@ func TestExternalCommitAntiDoubleJoin(t *testing.T) {
 			// Suppress unused variable warning from buildTwoMemberGroup.
 			_ = alice
 			_ = bob
+		})
+	}
+	if executed == 0 {
+		t.Fatal("no registered suites executed")
+	}
+}
+
+// resignExternalCommit decodes a valid external-commit MLSMessage, lets mutate
+// rewrite its inner Commit (reorder/append proposals, tamper the leaf, …), then
+// RE-SIGNS the FramedContent with the joiner's signer so the OUTER signature is
+// valid again. This forces the receiver past signature verification and into the
+// inner §12.4.3.2 validation we are actually testing (not a cheap sig failure).
+// The original confirmation_tag is preserved unchanged.
+func resignExternalCommit(t *testing.T, suite cipher.Suite, signer crypto.Signer, gc keyschedule.GroupContext, src []byte, mutate func(*group.Commit)) []byte {
+	t.Helper()
+	var m framing.MLSMessage
+	if err := m.UnmarshalMLS(src); err != nil {
+		t.Fatalf("resign: UnmarshalMLS: %v", err)
+	}
+	var cm group.Commit
+	if err := cm.UnmarshalMLS(m.Public.Content.Content); err != nil {
+		t.Fatalf("resign: Commit.UnmarshalMLS: %v", err)
+	}
+	mutate(&cm)
+	newBody, err := cm.MarshalMLS()
+	if err != nil {
+		t.Fatalf("resign: Commit.MarshalMLS: %v", err)
+	}
+	fc := m.Public.Content
+	fc.Content = newBody
+	_, sig, err := framing.SignCommit(suite, signer, &gc, fc)
+	if err != nil {
+		t.Fatalf("resign: SignCommit: %v", err)
+	}
+	m.Public.Content = fc
+	m.Public.Auth.Signature = sig // keep original ConfirmationTag
+	out, err := m.MarshalMLS()
+	if err != nil {
+		t.Fatalf("resign: MLSMessage.MarshalMLS: %v", err)
+	}
+	return out
+}
+
+// TestExternalCommitReceiverValidation covers the receiver-side admission gaps in
+// processExternalCommit (RFC 9420 §12.4.3.2). Each case starts from a VALID
+// external commit, mutates it adversarially, and RE-SIGNS with the joiner's
+// signer — so we exercise inner validation, not signature checks. The receiver
+// must return an error WITHOUT panicking and WITHOUT advancing its epoch.
+func TestExternalCommitReceiverValidation(t *testing.T) {
+	executed := 0
+	for _, csID := range externalCommitSuites {
+		suite, ok := cipher.Lookup(csID)
+		if !ok {
+			t.Logf("suite %#x not registered, skipping", csID)
+			continue
+		}
+		executed++
+		t.Run("suite", func(t *testing.T) {
+			// Build a baseline valid external commit (carol, fresh non-member).
+			// alice0 (leaf 0) + bob (leaf 1); the adversarial commits target alice0.
+			alice0, _ := buildTwoMemberGroup(t, suite)
+
+			// assertRejectedNoPanic processes commitBytes on alice0 — the group whose
+			// GroupInfo the commit was signed against — and requires a clean error +
+			// no panic + unchanged epoch. A rejected commit is atomic (state intact),
+			// so the same alice0 is reused across cases.
+			assertRejectedNoPanic := func(t *testing.T, commitBytes []byte, desc string) {
+				t.Helper()
+				epBefore := alice0.Epoch()
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Fatalf("%s: PANIC (must be a clean error): %v", desc, r)
+						}
+					}()
+					if err := alice0.ProcessCommit(nil, commitBytes); err == nil {
+						t.Errorf("%s: expected error, got nil", desc)
+					} else {
+						t.Logf("%s: correctly rejected: %v", desc, err)
+					}
+				}()
+				if alice0.Epoch() != epBefore {
+					t.Errorf("%s: epoch changed (%d → %d) after rejected commit", desc, epBefore, alice0.Epoch())
+				}
+			}
+
+			gi, err := alice0.PublishGroupInfo()
+			if err != nil {
+				t.Fatalf("PublishGroupInfo: %v", err)
+			}
+			carolSigner := makeSigner(t)
+			_, validCommit, err := group.ExternalCommit(suite, *gi, makeCred("carol"), carolSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("ExternalCommit (baseline): %v", err)
+			}
+			gc := gi.GroupContext // epoch-n context used to re-sign
+
+			// (a) Critical-1 repro — ExternalInit NOT first: prepend a Remove so the
+			// old code's cm.Proposals[0].Proposal.ExternalInit would nil-deref and
+			// panic. Re-signed → reaches the inner code path. Must error, not panic.
+			notFirst := resignExternalCommit(t, suite, carolSigner, gc, validCommit, func(cm *group.Commit) {
+				removeBob := group.ProposalOrRef{
+					Type: group.ProposalOrRefTypeProposal,
+					Proposal: &group.Proposal{
+						Type:   group.ProposalTypeRemove,
+						Remove: &group.Remove{Removed: 1}, // bob (leaf 1)
+					},
+				}
+				cm.Proposals = append([]group.ProposalOrRef{removeBob}, cm.Proposals...)
+			})
+			assertRejectedNoPanic(t, notFirst, "(a) ExternalInit-not-first")
+
+			// (b) Critical-2 repro — foreign-leaf Remove: [ExternalInit, Remove(bob)].
+			// bob's signature key != joiner's → unauthorized eviction, must reject.
+			foreignRemove := resignExternalCommit(t, suite, carolSigner, gc, validCommit, func(cm *group.Commit) {
+				cm.Proposals = append(cm.Proposals, group.ProposalOrRef{
+					Type: group.ProposalOrRefTypeProposal,
+					Proposal: &group.Proposal{
+						Type:   group.ProposalTypeRemove,
+						Remove: &group.Remove{Removed: 1}, // bob, NOT the joiner
+					},
+				})
+			})
+			assertRejectedNoPanic(t, foreignRemove, "(b) foreign-leaf Remove")
+
+			// (c) Important-3 repro — malformed joiner leaf: tamper the leaf signature
+			// and re-sign the FramedContent. The outer sig is valid but the leaf's own
+			// LeafNodeTBS signature is broken → must reject.
+			badLeaf := resignExternalCommit(t, suite, carolSigner, gc, validCommit, func(cm *group.Commit) {
+				if len(cm.Path.LeafNode.Signature) == 0 {
+					t.Fatal("(c): joiner leaf has no signature to tamper")
+				}
+				cm.Path.LeafNode.Signature[0] ^= 0xff
+			})
+			assertRejectedNoPanic(t, badLeaf, "(c) malformed joiner leaf signature")
+
+			// (c2) Important-3 — wrong leaf_node_source: a commit-path leaf must be
+			// source=commit. Flip to key_package and re-sign the frame.
+			badSource := resignExternalCommit(t, suite, carolSigner, gc, validCommit, func(cm *group.Commit) {
+				lt := tree.Lifetime{NotBefore: 0, NotAfter: 1 << 62}
+				cm.Path.LeafNode.LeafNodeSource = tree.LeafNodeSourceKeyPackage
+				cm.Path.LeafNode.Lifetime = &lt
+				cm.Path.LeafNode.ParentHash = nil
+			})
+			assertRejectedNoPanic(t, badSource, "(c2) wrong leaf_node_source")
+		})
+	}
+	if executed == 0 {
+		t.Fatal("no registered suites executed")
+	}
+}
+
+// TestExternalCommitExternalInitNotFirst is the dedicated Critical-1 (panic/DoS)
+// repro (RFC 9420 §12.4.3.2). It builds a LEGITIMATE anti-double-join external
+// commit whose proposals are [ExternalInit, Remove(ownStaleLeaf)], then reorders
+// them to [Remove(ownStaleLeaf), ExternalInit] and re-signs. Because the Remove
+// targets the joiner's OWN stale leaf, the anti-double-join authorization check
+// passes — so execution proceeds to the point where the old code indexed
+// cm.Proposals[0].Proposal.ExternalInit.KemOutput and nil-dereferenced (the [0]
+// proposal is now the Remove). The receiver MUST return a clean error, NOT panic.
+func TestExternalCommitExternalInitNotFirst(t *testing.T) {
+	executed := 0
+	for _, csID := range externalCommitSuites {
+		suite, ok := cipher.Lookup(csID)
+		if !ok {
+			t.Logf("suite %#x not registered, skipping", csID)
+			continue
+		}
+		executed++
+		t.Run("suite", func(t *testing.T) {
+			// Build a 2-member group with a CONTROLLED bob signer so we can re-use
+			// bob's identity for an anti-double-join external commit.
+			bobSigner := makeSigner(t)
+			aliceSigner := makeSigner(t)
+			alice, err := group.NewGroup(suite, []byte("ext-init-order"), makeCred("alice"), aliceSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("NewGroup(alice): %v", err)
+			}
+			bobKP, bobInitPriv, bobLeafPriv, err := group.NewKeyPackage(suite, makeCred("bob"), bobSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("NewKeyPackage(bob): %v", err)
+			}
+			bobKPMsg, err := group.EncodeKeyPackageMessage(bobKP)
+			if err != nil {
+				t.Fatalf("EncodeKeyPackageMessage(bob): %v", err)
+			}
+			_, welcomeBob, err := alice.Commit(group.CommitOptions{
+				ByValue: []group.Proposal{group.ProposeAdd(bobKP)},
+			})
+			if err != nil {
+				t.Fatalf("Commit(Add bob): %v", err)
+			}
+			if _, err := group.JoinFromWelcome(suite, welcomeBob, group.JoinOptions{
+				KeyPackage:     bobKPMsg,
+				InitPriv:       bobInitPriv,
+				EncryptionPriv: bobLeafPriv,
+				Signer:         bobSigner,
+				ExternalPSKs:   map[string][]byte{},
+			}); err != nil {
+				t.Fatalf("JoinFromWelcome(bob): %v", err)
+			}
+
+			gi, err := alice.PublishGroupInfo()
+			if err != nil {
+				t.Fatalf("PublishGroupInfo: %v", err)
+			}
+
+			// bob external-commits with the SAME signer → anti-double-join fires:
+			// the commit is [ExternalInit, Remove(bob's stale leaf 1)].
+			_, antiDJCommit, err := group.ExternalCommit(suite, *gi, makeCred("bob"), bobSigner, makeLifetime())
+			if err != nil {
+				t.Fatalf("ExternalCommit(bob anti-dj): %v", err)
+			}
+
+			// Reorder so ExternalInit is NOT first, keeping the legitimate own-leaf
+			// Remove → the Remove check passes, exposing the old [0] nil-deref.
+			reordered := resignExternalCommit(t, suite, bobSigner, gi.GroupContext, antiDJCommit, func(cm *group.Commit) {
+				// Sanity: confirm the honest commit really is [ExternalInit, Remove].
+				if len(cm.Proposals) != 2 ||
+					cm.Proposals[0].Proposal.Type != group.ProposalTypeExternalInit ||
+					cm.Proposals[1].Proposal.Type != group.ProposalTypeRemove {
+					t.Fatalf("unexpected anti-dj proposal shape: %d proposals", len(cm.Proposals))
+				}
+				cm.Proposals[0], cm.Proposals[1] = cm.Proposals[1], cm.Proposals[0]
+			})
+
+			epBefore := alice.Epoch()
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("ExternalInit-not-first: PANIC (Critical-1 not fixed): %v", r)
+					}
+				}()
+				if err := alice.ProcessCommit(nil, reordered); err == nil {
+					t.Error("ExternalInit-not-first: expected error, got nil")
+				} else {
+					t.Logf("ExternalInit-not-first: correctly rejected (no panic): %v", err)
+				}
+			}()
+			if alice.Epoch() != epBefore {
+				t.Errorf("epoch changed (%d → %d) after rejected commit", epBefore, alice.Epoch())
+			}
 		})
 	}
 	if executed == 0 {

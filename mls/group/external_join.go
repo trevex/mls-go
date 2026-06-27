@@ -82,8 +82,11 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 		return fmt.Errorf("group: processExternalCommit: parse Commit body: %w", err)
 	}
 
-	// §12.4.3.2 validity checks.
-	if err := validateExternalCommit(cm); err != nil {
+	// §12.4.3.2 validity checks. Returns the single ExternalInit proposal so we
+	// never assume its position in cm.Proposals (an ExternalInit that is not first
+	// must not nil-deref a [0] index — CVE-class DoS).
+	extInit, err := validateExternalCommit(cm)
+	if err != nil {
 		return err
 	}
 
@@ -103,6 +106,36 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 			ac.Content.Epoch, g.groupContext.Epoch)
 	}
 
+	// Post-authentication authorization checks (§12.4.3.2 / §7.6). Run only after
+	// the joiner's signature is verified.
+	//
+	// §7.6: a leaf added by a Commit's UpdatePath MUST carry leaf_node_source =
+	// commit. Reject anything else before trusting the leaf.
+	if cm.Path.LeafNode.LeafNodeSource != tree.LeafNodeSourceCommit {
+		return fmt.Errorf("group: processExternalCommit: joiner leaf_node_source %d, want commit (§7.6)",
+			cm.Path.LeafNode.LeafNodeSource)
+	}
+
+	// §12.4.3.2 anti-double-join: a Remove in an external commit may ONLY target
+	// the joiner's own prior (stale) leaf — i.e. a leaf whose signature key equals
+	// the joiner's. Removing any other member is an unauthorized eviction. Look up
+	// each removed leaf in the CURRENT tree (pre-mutation) and compare keys.
+	for _, por := range cm.Proposals {
+		if por.Type != ProposalOrRefTypeProposal || por.Proposal == nil {
+			continue
+		}
+		if por.Proposal.Type == ProposalTypeRemove && por.Proposal.Remove != nil {
+			removed := por.Proposal.Remove.Removed
+			ln, err := g.tree.LeafNodeAt(removed)
+			if err != nil {
+				return fmt.Errorf("group: processExternalCommit: Remove targets leaf %d: %w", removed, err)
+			}
+			if !bytes.Equal(ln.SignatureKey, joinerSigKey) {
+				return fmt.Errorf("group: processExternalCommit: Remove of leaf %d is not the joiner's own leaf (§12.4.3.2)", removed)
+			}
+		}
+	}
+
 	// Split the authenticated content into confirmedInput and the confirmation_tag.
 	acBytes, err := ac.MarshalMLS()
 	if err != nil {
@@ -119,7 +152,7 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 	if err != nil {
 		return fmt.Errorf("group: processExternalCommit: ExternalPub: %w", err)
 	}
-	kemOutput := cm.Proposals[0].Proposal.ExternalInit.KemOutput
+	kemOutput := extInit.KemOutput
 	initSecret, err := g.suite.ExternalInitDecap(extPriv, kemOutput)
 	if err != nil {
 		return fmt.Errorf("group: processExternalCommit: ExternalInitDecap: %w", err)
@@ -149,6 +182,15 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 	liC, err := wt.AddLeaf(cm.Path.LeafNode)
 	if err != nil {
 		return fmt.Errorf("group: processExternalCommit: AddLeaf: %w", err)
+	}
+
+	// §7.3: verify the joiner's own LeafNode signature under "LeafNodeTBS" at its
+	// resolved index liC. The UpdatePath leaf is self-signed by the joiner; an
+	// attacker-controlled commit could carry a forged or mismatched leaf.
+	if ok, err := cm.Path.LeafNode.VerifySignature(g.suite, g.groupContext.GroupID, liC); err != nil {
+		return fmt.Errorf("group: processExternalCommit: verify joiner leaf signature: %w", err)
+	} else if !ok {
+		return fmt.Errorf("group: processExternalCommit: joiner leaf signature invalid (§7.3)")
 	}
 
 	// N4 step 4: Compute post-path tree hash (clone + Merge) for the two-GroupContext
@@ -194,6 +236,14 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 	// Apply the path to the working tree.
 	if err := wt.Merge(liC, cm.Path); err != nil {
 		return fmt.Errorf("group: processExternalCommit: Merge (working tree): %w", err)
+	}
+
+	// §7.9.2: the post-merge tree MUST be parent-hash valid. A malformed UpdatePath
+	// could otherwise leave the tree inconsistent (mirrors JoinFromWelcome).
+	if ok, err := wt.VerifyParentHashes(); err != nil {
+		return fmt.Errorf("group: processExternalCommit: VerifyParentHashes: %w", err)
+	} else if !ok {
+		return fmt.Errorf("group: processExternalCommit: parent hash verification failed (§7.9.2)")
 	}
 
 	// N4 step 5: Confirmed transcript hash (uses g.interim, the receiver's current
@@ -264,39 +314,49 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 }
 
 // validateExternalCommit enforces the §12.4.3.2 proposal validity rules for an
-// external commit:
+// external commit and returns the single ExternalInit proposal body:
 //   - exactly one ExternalInit proposal
 //   - UpdatePath must be present
 //   - no by-reference proposals
 //   - only ExternalInit, Remove, PreSharedKey, GroupContextExtensions proposals allowed
 //     (no Add, Update, ReInit)
-func validateExternalCommit(cm Commit) error {
+//
+// It returns the (only) ExternalInit so the caller never has to guess its
+// position in the proposal list. The RFC does NOT require ExternalInit to be
+// first, so callers MUST use the returned value rather than indexing
+// cm.Proposals[0] (which would nil-deref if some other proposal precedes it).
+func validateExternalCommit(cm Commit) (*ExternalInit, error) {
 	if cm.Path == nil {
-		return fmt.Errorf("group: external commit: path is required (§12.4.3.2)")
+		return nil, fmt.Errorf("group: external commit: path is required (§12.4.3.2)")
 	}
+	var extInit *ExternalInit
 	nExternalInit := 0
 	for _, por := range cm.Proposals {
 		if por.Type == ProposalOrRefTypeReference {
-			return fmt.Errorf("group: external commit: by-reference proposals not allowed (§12.4.3.2)")
+			return nil, fmt.Errorf("group: external commit: by-reference proposals not allowed (§12.4.3.2)")
 		}
 		if por.Proposal == nil {
-			return fmt.Errorf("group: external commit: nil inline proposal")
+			return nil, fmt.Errorf("group: external commit: nil inline proposal")
 		}
 		switch por.Proposal.Type {
 		case ProposalTypeExternalInit:
+			if por.Proposal.ExternalInit == nil {
+				return nil, fmt.Errorf("group: external commit: ExternalInit proposal has nil body")
+			}
+			extInit = por.Proposal.ExternalInit
 			nExternalInit++
 		case ProposalTypeRemove, ProposalTypePreSharedKey, ProposalTypeGroupContextExtensions:
 			// allowed
 		case ProposalTypeAdd, ProposalTypeUpdate, ProposalTypeReInit:
-			return fmt.Errorf("group: external commit: proposal type %v not allowed (§12.4.3.2)",
+			return nil, fmt.Errorf("group: external commit: proposal type %v not allowed (§12.4.3.2)",
 				por.Proposal.Type)
 		default:
-			return fmt.Errorf("group: external commit: unknown proposal type %v", por.Proposal.Type)
+			return nil, fmt.Errorf("group: external commit: unknown proposal type %v", por.Proposal.Type)
 		}
 	}
 	if nExternalInit != 1 {
-		return fmt.Errorf("group: external commit: must have exactly 1 ExternalInit proposal, got %d (§12.4.3.2)",
+		return nil, fmt.Errorf("group: external commit: must have exactly 1 ExternalInit proposal, got %d (§12.4.3.2)",
 			nExternalInit)
 	}
-	return nil
+	return extInit, nil
 }

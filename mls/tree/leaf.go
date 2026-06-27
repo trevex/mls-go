@@ -287,6 +287,15 @@ func (l LeafNode) verifySignature(suite cipher.Suite, groupID []byte, leafIndex 
 	return suite.VerifyWithLabel(l.SignatureKey, "LeafNodeTBS", tbs, l.Signature), nil
 }
 
+// VerifySignature checks this leaf's own signature under label "LeafNodeTBS"
+// (RFC 9420 §7.3). groupID and leafIndex are required for update/commit-source
+// leaves (they are part of the TBS); they are ignored for key_package leaves.
+// Exported so other packages can validate a standalone LeafNode at a known leaf
+// index — e.g. the UpdatePath leaf carried in an external commit (§12.4.3.2).
+func (l LeafNode) VerifySignature(suite cipher.Suite, groupID []byte, leafIndex uint32) (bool, error) {
+	return l.verifySignature(suite, groupID, leafIndex)
+}
+
 // DecodeLeafNode decodes a LeafNode from a cursor (used by framing to delimit
 // an Update proposal's inline LeafNode).
 func DecodeLeafNode(c *syntax.Cursor) (LeafNode, error) { return decodeLeafNode(c) }

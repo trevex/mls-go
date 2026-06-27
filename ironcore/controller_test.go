@@ -3,6 +3,7 @@ package ironcore_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/ironcore"
@@ -302,4 +303,139 @@ func TestControllerSelfRemoval(t *testing.T) {
 func mkNodeSimple(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering) (ctrl *ironcore.Controller, kpMsg, initPriv, leafPriv []byte) {
 	t.Helper()
 	return mkNode(t, suite, vni, name, seq, nil)
+}
+
+// ─── Task 4: Reconcile + GATE 1 (lifecycle convergence) ──────────────────────
+
+// joinerInfo holds the pre-generated material for a prospective joiner node.
+type joinerInfo struct {
+	name     string
+	ctrl     *ironcore.Controller
+	kpMsg    []byte
+	initPriv []byte
+	leafPriv []byte
+}
+
+// TestControllerLifecycle is Gate 1: N nodes form a VNI under 0xF001; the
+// designated committer Reconciles a series of membership changes (adds then a
+// remove); all nodes converge (byte-equal epoch_authenticator + ESP SA Key)
+// after each.
+func TestControllerLifecycle(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Pre-generate KP material for nodes 1, 2, 3 so we can publish them in the
+	// resolver before calling Reconcile.
+	joiners := make([]joinerInfo, 3)
+	kpMsgByName := map[string][]byte{}
+	for i := range joiners {
+		name := fmt.Sprintf("node-%d", i+1)
+		joiners[i].name = name
+		ctrl, kpMsg, ip, lp := mkNode(t, suite, testVNI, name, seq, nil)
+		joiners[i].ctrl = ctrl
+		joiners[i].kpMsg = kpMsg
+		joiners[i].initPriv = ip
+		joiners[i].leafPriv = lp
+		kpMsgByName[name] = kpMsg
+	}
+
+	// Resolver maps identity → published KeyPackage.
+	resolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		kp, ok := kpMsgByName[string(identity)]
+		return kp, ok
+	})
+
+	// Build founder (node-0) with resolver.
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, resolver)
+
+	// Reconcile: desired = [node-0, node-1, node-2, node-3].
+	desired := [][]byte{
+		[]byte("node-0"), []byte("node-1"), []byte("node-2"), []byte("node-3"),
+	}
+	result, err := node0.Reconcile(ctx, desired)
+	if err != nil {
+		t.Fatalf("node-0.Reconcile(add 3): %v", err)
+	}
+	if !result.Committed {
+		t.Fatalf("Reconcile: Committed=false, want true (node-0 is committer)")
+	}
+	if !result.Won {
+		t.Fatalf("Reconcile: Won=false, want true (no competition)")
+	}
+	if len(result.Added) != 3 {
+		t.Fatalf("Reconcile: Added=%v, want 3 identities", result.Added)
+	}
+	if len(result.WelcomeMsg) == 0 {
+		t.Fatal("Reconcile: WelcomeMsg is empty, want a Welcome for added members")
+	}
+	if len(result.Pending) != 0 {
+		t.Fatalf("Reconcile: Pending=%v, want none", result.Pending)
+	}
+
+	// Each joiner joins via Welcome.
+	for i, jn := range joiners {
+		if err := jn.ctrl.JoinViaWelcome(result.WelcomeMsg, jn.kpMsg, jn.initPriv, jn.leafPriv); err != nil {
+			t.Fatalf("node-%d.JoinViaWelcome: %v", i+1, err)
+		}
+	}
+
+	// All 4 nodes converge at epoch 1.
+	all4 := []*ironcore.Controller{node0, joiners[0].ctrl, joiners[1].ctrl, joiners[2].ctrl}
+	assertControllerConverged(t, "gate1-epoch1", all4...)
+	for _, c := range all4 {
+		if c.Epoch() != 1 {
+			t.Fatalf("expected epoch 1, got %d", c.Epoch())
+		}
+	}
+	t.Logf("Gate1: 4 nodes converged at epoch 1, EA=%x", node0.Group().EpochAuthenticator())
+
+	// Non-committer Reconcile is a no-op (node-1 is not the committer).
+	node1 := joiners[0].ctrl
+	nopResult, err := node1.Reconcile(ctx, desired)
+	if err != nil {
+		t.Fatalf("node-1.Reconcile (non-committer): %v", err)
+	}
+	if nopResult.Committed {
+		t.Fatal("non-committer Reconcile: Committed should be false")
+	}
+
+	// Reconcile removes node-2: desired = [node-0, node-1, node-3].
+	desired2 := [][]byte{[]byte("node-0"), []byte("node-1"), []byte("node-3")}
+	result2, err := node0.Reconcile(ctx, desired2)
+	if err != nil {
+		t.Fatalf("node-0.Reconcile(remove node-2): %v", err)
+	}
+	if !result2.Committed || !result2.Won {
+		t.Fatalf("Reconcile(remove): Committed=%v Won=%v, want both true",
+			result2.Committed, result2.Won)
+	}
+	if len(result2.Removed) != 1 {
+		t.Fatalf("Reconcile(remove): Removed=%v, want 1 leaf", result2.Removed)
+	}
+
+	// node-2's HandleCommit returns ErrSelfRemoved.
+	node2 := joiners[1].ctrl
+	if err := node2.HandleCommit(result2.CommitMsg); err != ironcore.ErrSelfRemoved {
+		t.Fatalf("node-2.HandleCommit: want ErrSelfRemoved, got %v", err)
+	}
+
+	// Survivors process the commit.
+	node3 := joiners[2].ctrl
+	if err := node1.HandleCommit(result2.CommitMsg); err != nil {
+		t.Fatalf("node-1.HandleCommit(remove node-2): %v", err)
+	}
+	if err := node3.HandleCommit(result2.CommitMsg); err != nil {
+		t.Fatalf("node-3.HandleCommit(remove node-2): %v", err)
+	}
+
+	// 3 survivors converge at epoch 2.
+	survivors := []*ironcore.Controller{node0, node1, node3}
+	assertControllerConverged(t, "gate1-epoch2", survivors...)
+	for _, c := range survivors {
+		if c.Epoch() != 2 {
+			t.Fatalf("expected epoch 2, got %d", c.Epoch())
+		}
+	}
+	t.Logf("Gate1: 3 survivors converged at epoch 2, EA=%x", node0.Group().EpochAuthenticator())
 }

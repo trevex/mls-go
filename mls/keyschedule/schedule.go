@@ -36,18 +36,33 @@ func JoinerSecret(suite cipher.Suite, initSecret, commitSecret, groupContext []b
 	return suite.ExpandWithLabel(extracted, "joiner", groupContext, suite.HashLen())
 }
 
-// DeriveEpochSecrets runs the full RFC 9420 §8 key schedule for one epoch. A nil
-// pskSecret is treated as the all-zero KDF.Nh vector (psk_secret_[0]).
-func DeriveEpochSecrets(suite cipher.Suite, initSecret, commitSecret, pskSecret, groupContext []byte) (EpochSecrets, error) {
+// WelcomeKeyNonce derives the AEAD key/nonce that protect a Welcome's
+// encrypted_group_info (RFC 9420 §12.4.3.1):
+//
+//	welcome_key   = ExpandWithLabel(welcome_secret, "key",   "", AEAD.Nk)
+//	welcome_nonce = ExpandWithLabel(welcome_secret, "nonce", "", AEAD.Nn)
+func WelcomeKeyNonce(suite cipher.Suite, welcomeSecret []byte) (key, nonce []byte, err error) {
+	key, err = suite.ExpandWithLabel(welcomeSecret, "key", nil, suite.AEADKeySize())
+	if err != nil {
+		return nil, nil, err
+	}
+	nonce, err = suite.ExpandWithLabel(welcomeSecret, "nonce", nil, suite.AEADNonceSize())
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, nonce, nil
+}
+
+// EpochSecretsFromJoiner runs the §8 key schedule from a known joiner_secret
+// (the Welcome path: the joiner receives joiner_secret directly, rather than
+// deriving it from init_secret+commit_secret). A nil pskSecret is the all-zero
+// KDF.Nh vector.
+func EpochSecretsFromJoiner(suite cipher.Suite, joinerSecret, pskSecret, groupContext []byte) (EpochSecrets, error) {
 	nh := suite.HashLen()
 	if pskSecret == nil {
 		pskSecret = make([]byte, nh)
 	}
-	joiner, err := JoinerSecret(suite, initSecret, commitSecret, groupContext)
-	if err != nil {
-		return EpochSecrets{}, err
-	}
-	member, err := suite.Extract(joiner, pskSecret) // Extract(salt=joiner_secret, IKM=psk_secret)
+	member, err := suite.Extract(joinerSecret, pskSecret) // Extract(salt=joiner_secret, IKM=psk_secret)
 	if err != nil {
 		return EpochSecrets{}, err
 	}
@@ -59,19 +74,15 @@ func DeriveEpochSecrets(suite cipher.Suite, initSecret, commitSecret, pskSecret,
 	if err != nil {
 		return EpochSecrets{}, err
 	}
-	es := EpochSecrets{JoinerSecret: joiner, WelcomeSecret: welcome, EpochSecret: epoch}
+	es := EpochSecrets{JoinerSecret: joinerSecret, WelcomeSecret: welcome, EpochSecret: epoch}
 	for _, d := range []struct {
 		label string
 		out   *[]byte
 	}{
-		{"sender data", &es.SenderDataSecret},
-		{"encryption", &es.EncryptionSecret},
-		{"exporter", &es.ExporterSecret},
-		{"external", &es.ExternalSecret},
-		{"confirm", &es.ConfirmationKey},
-		{"membership", &es.MembershipKey},
-		{"resumption", &es.ResumptionPSK},
-		{"authentication", &es.EpochAuthenticator},
+		{"sender data", &es.SenderDataSecret}, {"encryption", &es.EncryptionSecret},
+		{"exporter", &es.ExporterSecret}, {"external", &es.ExternalSecret},
+		{"confirm", &es.ConfirmationKey}, {"membership", &es.MembershipKey},
+		{"resumption", &es.ResumptionPSK}, {"authentication", &es.EpochAuthenticator},
 		{"init", &es.InitSecret},
 	} {
 		v, err := suite.DeriveSecret(epoch, d.label)
@@ -81,6 +92,16 @@ func DeriveEpochSecrets(suite cipher.Suite, initSecret, commitSecret, pskSecret,
 		*d.out = v
 	}
 	return es, nil
+}
+
+// DeriveEpochSecrets runs the full RFC 9420 §8 key schedule for one epoch. A nil
+// pskSecret is treated as the all-zero KDF.Nh vector (psk_secret_[0]).
+func DeriveEpochSecrets(suite cipher.Suite, initSecret, commitSecret, pskSecret, groupContext []byte) (EpochSecrets, error) {
+	joiner, err := JoinerSecret(suite, initSecret, commitSecret, groupContext)
+	if err != nil {
+		return EpochSecrets{}, err
+	}
+	return EpochSecretsFromJoiner(suite, joiner, pskSecret, groupContext)
 }
 
 // ExternalPub derives the group's external HPKE key pair from external_secret

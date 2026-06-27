@@ -230,7 +230,7 @@ func skimProposal(c *syntax.Cursor) error {
 	}
 	switch int(pt) {
 	case proposalTypeAdd:
-		return fmt.Errorf("framing: Add proposal content not yet supported (KeyPackage lands in Plan 8)")
+		return skimKeyPackage(c)
 	case proposalTypeUpdate:
 		_, err := tree.DecodeLeafNode(c)
 		return err
@@ -260,6 +260,28 @@ func skimProposal(c *syntax.Cursor) error {
 	default:
 		return fmt.Errorf("framing: unknown proposal type %d", pt)
 	}
+}
+
+// skimKeyPackage advances over a KeyPackage (RFC 9420 §10), delimiting an
+// Add proposal's inline KeyPackage without importing the group package.
+func skimKeyPackage(c *syntax.Cursor) error {
+	if _, err := c.ReadUint16(); err != nil { // version
+		return err
+	}
+	if _, err := c.ReadUint16(); err != nil { // cipher_suite
+		return err
+	}
+	if _, err := c.ReadOpaqueV(); err != nil { // init_key<V>
+		return err
+	}
+	if _, err := tree.DecodeLeafNode(c); err != nil { // leaf_node (inline)
+		return err
+	}
+	if _, err := syntax.ReadVectorV(c, tree.DecodeExtension); err != nil { // extensions<V>
+		return err
+	}
+	_, err := c.ReadOpaqueV() // signature<V>
+	return err
 }
 
 // skimPreSharedKeyID advances over PreSharedKeyID (RFC 9420 §8.4).
@@ -329,6 +351,21 @@ type AuthenticatedContent struct {
 	WireFormat WireFormat
 	Content    FramedContent
 	Auth       FramedContentAuthData
+}
+
+// MarshalMLS serializes the AuthenticatedContent as wire_format || FramedContent
+// || FramedContentAuthData (RFC 9420 §6 — the form keyschedule.SplitAuthenticatedContent
+// consumes to derive the confirmed transcript hash).
+func (ac AuthenticatedContent) MarshalMLS() ([]byte, error) {
+	b := syntax.NewBuilder()
+	b.WriteUint16(uint16(ac.WireFormat))
+	if err := ac.Content.marshal(b); err != nil {
+		return nil, err
+	}
+	if err := ac.Auth.marshal(b, ac.Content.ContentType); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
 
 // framedContentTBS builds the to-be-signed bytes (RFC 9420 §6.1). gc is

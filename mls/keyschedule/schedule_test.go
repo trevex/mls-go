@@ -52,6 +52,61 @@ func TestDeriveEpochSecretsEpoch0(t *testing.T) {
 	}
 }
 
+func TestEpochSecretsFromJoinerAgreesWithDeriveEpoch(t *testing.T) {
+	// Both DeriveEpochSecrets and EpochSecretsFromJoiner must produce identical
+	// results for a given (init, commit, psk, gc) tuple.
+	s, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	gc := GroupContext{
+		Version:                 tree.ProtocolVersionMLS10,
+		CipherSuite:             cipher.X25519_AES128GCM_SHA256_Ed25519,
+		GroupID:                 hx(t, "a897b53575b4dd35fed4466e4e714bfa949eaa72e616a9c68a47b39cb7a60d2e"),
+		Epoch:                   0,
+		TreeHash:                hx(t, "9769e302a99c457350a8e636009b12a2fee068664004606d6318eb3a1977d818"),
+		ConfirmedTranscriptHash: hx(t, "5e57c9364dc71f0f71b19ffe561ab77257c490708a47e29f8f73f2b318201d2f"),
+	}
+	gcBytes, _ := gc.MarshalMLS()
+	initSecret := hx(t, "a897b53575b4dd35fed4466e4e714bfa949eaa72e616a9c68a47b39cb7a60d2e")
+	commitSecret := hx(t, "a22606222e350fd7f0937168fe7548fb06626ab143cba7611d641693b1447509")
+	pskSecret := hx(t, "e871b247379522395689182736cb3d1e7b108d6ae934b802223975de8dc3f80b")
+
+	full, err := DeriveEpochSecrets(s, initSecret, commitSecret, pskSecret, gcBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner, err := JoinerSecret(s, initSecret, commitSecret, gcBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromJoiner, err := EpochSecretsFromJoiner(s, joiner, pskSecret, gcBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(full.WelcomeSecret, fromJoiner.WelcomeSecret) {
+		t.Errorf("WelcomeSecret mismatch: full=%x joiner=%x", full.WelcomeSecret, fromJoiner.WelcomeSecret)
+	}
+	if !bytes.Equal(full.EpochAuthenticator, fromJoiner.EpochAuthenticator) {
+		t.Errorf("EpochAuthenticator mismatch: full=%x joiner=%x", full.EpochAuthenticator, fromJoiner.EpochAuthenticator)
+	}
+	if !bytes.Equal(full.InitSecret, fromJoiner.InitSecret) {
+		t.Errorf("InitSecret mismatch: full=%x joiner=%x", full.InitSecret, fromJoiner.InitSecret)
+	}
+}
+
+func TestWelcomeKeyNonce(t *testing.T) {
+	s, _ := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	welcomeSecret := make([]byte, s.HashLen())
+	key, nonce, err := WelcomeKeyNonce(s, welcomeSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(key) != s.AEADKeySize() {
+		t.Errorf("key length %d, want %d", len(key), s.AEADKeySize())
+	}
+	if len(nonce) != s.AEADNonceSize() {
+		t.Errorf("nonce length %d, want %d", len(nonce), s.AEADNonceSize())
+	}
+}
+
 func TestMLSExporter(t *testing.T) {
 	// key-schedule.json case 0, epoch 0 exporter sub-case.
 	// The label is the literal ASCII hex string from the KAT JSON (not decoded bytes).

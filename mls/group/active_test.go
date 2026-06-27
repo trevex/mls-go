@@ -340,6 +340,51 @@ func TestActiveRoundTrip(t *testing.T) {
 			}
 			t.Log("T6: gap-fill topology converges (§7.5 newlyAdded skip exercised)")
 			assertConverged(t, "T6", suite, alice, dave, frank)
+
+			// ── T7: Application messages ──────────────────────────────────────
+
+			plain1 := []byte("hello from alice")
+			appMsg1, err := alice.ProtectApplication(plain1, nil)
+			if err != nil {
+				t.Fatalf("T7 Alice.ProtectApplication: %v", err)
+			}
+			got1, ad1, err := dave.UnprotectApplication(appMsg1)
+			if err != nil {
+				t.Fatalf("T7 Dave.UnprotectApplication: %v", err)
+			}
+			if !bytes.Equal(got1, plain1) {
+				t.Fatalf("T7 plaintext mismatch: got %q, want %q", got1, plain1)
+			}
+			if len(ad1) != 0 {
+				t.Fatalf("T7 authenticated_data expected empty, got %q", ad1)
+			}
+
+			// Second message advances generation.
+			plain2 := []byte("second message from alice")
+			appMsg2, err := alice.ProtectApplication(plain2, []byte("auth-data"))
+			if err != nil {
+				t.Fatalf("T7 Alice.ProtectApplication (2): %v", err)
+			}
+			got2, ad2, err := frank.UnprotectApplication(appMsg2)
+			if err != nil {
+				t.Fatalf("T7 Frank.UnprotectApplication: %v", err)
+			}
+			if !bytes.Equal(got2, plain2) {
+				t.Fatalf("T7 plaintext2 mismatch: got %q, want %q", got2, plain2)
+			}
+			if !bytes.Equal(ad2, []byte("auth-data")) {
+				t.Fatalf("T7 authenticated_data mismatch: got %q, want %q", ad2, "auth-data")
+			}
+
+			// Tampered ciphertext must fail.
+			tampered := make([]byte, len(appMsg1))
+			copy(tampered, appMsg1)
+			tampered[len(tampered)-1] ^= 0xFF
+			if _, _, err := dave.UnprotectApplication(tampered); err == nil {
+				t.Fatal("T7 expected error for tampered ciphertext, got nil")
+			}
+
+			t.Log("T7: application messages round-trip correctly")
 		})
 	}
 	if executed == 0 {

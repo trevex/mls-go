@@ -32,6 +32,15 @@ func decodeHPKECiphertext(c *syntax.Cursor) (HPKECiphertext, error) {
 	return h, nil
 }
 
+// MarshalTo writes the HPKECiphertext into b. Exported so group.EncryptedGroupSecrets
+// can embed it.
+func (h HPKECiphertext) MarshalTo(b *syntax.Builder) error { return h.marshal(b) }
+
+// DecodeHPKECiphertext reads one HPKECiphertext from c.
+func DecodeHPKECiphertext(c *syntax.Cursor) (HPKECiphertext, error) {
+	return decodeHPKECiphertext(c)
+}
+
 // UpdatePathNode is one node of a sender's filtered direct path: a fresh public
 // key plus the path secret encrypted to every member of the copath child's
 // resolution (RFC 9420 §7.6).

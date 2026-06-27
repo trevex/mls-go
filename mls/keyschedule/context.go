@@ -90,6 +90,10 @@ func (gc GroupContext) MarshalMLS() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// DecodeGroupContext reads one GroupContext from c (used by group.GroupInfo,
+// which embeds a GroupContext followed by more fields).
+func DecodeGroupContext(c *syntax.Cursor) (GroupContext, error) { return decodeGroupContext(c) }
+
 // UnmarshalMLS decodes a GroupContext, rejecting trailing bytes.
 func (gc *GroupContext) UnmarshalMLS(data []byte) error {
 	c := syntax.NewCursor(data)

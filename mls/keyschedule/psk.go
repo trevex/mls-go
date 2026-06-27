@@ -100,6 +100,15 @@ func decodePreSharedKeyID(c *syntax.Cursor) (PreSharedKeyID, error) {
 	return p, nil
 }
 
+// MarshalTo writes the PreSharedKeyID into b (no length prefix). Exported so
+// group.PreSharedKey can embed it inline.
+func (p PreSharedKeyID) MarshalTo(b *syntax.Builder) error { return p.marshal(b) }
+
+// DecodePreSharedKeyID reads one PreSharedKeyID from c.
+func DecodePreSharedKeyID(c *syntax.Cursor) (PreSharedKeyID, error) {
+	return decodePreSharedKeyID(c)
+}
+
 // pskLabel builds PSKLabel = struct{ PreSharedKeyID id; uint16 index; uint16
 // count; } (RFC 9420 §8.4).
 func pskLabel(id PreSharedKeyID, index, count uint16) ([]byte, error) {

@@ -424,6 +424,8 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	g.secretTree = st
 	// Seed the next epoch's resumption PSK into history immediately.
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
+	// Reset per-epoch sender ratchet counter (RFC 9420 §9.1).
+	g.appGeneration = 0
 
 	return nil
 }

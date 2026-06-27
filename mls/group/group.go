@@ -26,6 +26,9 @@ type Group struct {
 	// been in. Keyed by epoch number. Populated at join and after each commit so
 	// that PSK proposals in future commits can be resolved (RFC 9420 §8.4).
 	resumptionPSKHistory map[uint64][]byte
+	// appGeneration is the per-epoch, per-sender monotonic counter for application
+	// messages (RFC 9420 §9.1). It is reset to 0 on every epoch change.
+	appGeneration uint32
 }
 
 // Epoch returns the current epoch number.
@@ -37,6 +40,9 @@ func (g *Group) EpochAuthenticator() []byte { return g.epoch.EpochAuthenticator 
 
 // GroupContext returns the current GroupContext (RFC 9420 §8.1).
 func (g *Group) GroupContext() keyschedule.GroupContext { return g.groupContext }
+
+// OwnLeaf returns the group member's own leaf index.
+func (g *Group) OwnLeaf() uint32 { return g.ownLeaf }
 
 // Exporter derives an application secret (RFC 9420 §8.5) — feeds IronCore ESP SAs.
 func (g *Group) Exporter(label string, context []byte, length int) ([]byte, error) {

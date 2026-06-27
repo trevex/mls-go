@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -90,6 +91,19 @@ func (s *Server) getState(id uint32) (*state, error) {
 	return st, nil
 }
 
+func (st *state) resolveIdentity(identity []byte) (uint32, error) {
+	for _, leaf := range st.g.ActiveLeaves() {
+		cred, _, err := st.g.LeafCredential(leaf)
+		if err != nil {
+			continue
+		}
+		if bytes.Equal(cred.Identity, identity) {
+			return leaf, nil
+		}
+	}
+	return 0, status.Errorf(codes.NotFound, "no member with identity %q", identity)
+}
+
 func (s *Server) Name(_ context.Context, _ *pb.NameRequest) (*pb.NameResponse, error) {
 	return &pb.NameResponse{Name: "mls-mlkem-go"}, nil
 }
@@ -134,6 +148,116 @@ func (s *Server) StateAuth(_ context.Context, req *pb.StateAuthRequest) (*pb.Sta
 		return nil, err
 	}
 	return &pb.StateAuthResponse{StateAuthSecret: st.g.EpochAuthenticator()}, nil
+}
+
+func (s *Server) CreateKeyPackage(_ context.Context, req *pb.CreateKeyPackageRequest) (*pb.CreateKeyPackageResponse, error) {
+	suite, err := lookupSuite(req.CipherSuite)
+	if err != nil {
+		return nil, err
+	}
+	signer, sigSeed, err := newSigner(cipher.CipherSuite(req.CipherSuite))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "newSigner: %v", err)
+	}
+	cred := tree.Credential{CredentialType: tree.CredentialTypeBasic, Identity: req.Identity}
+	kp, initPriv, leafPriv, err := group.NewKeyPackage(suite, cred, signer, maxLifetime())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "NewKeyPackage: %v", err)
+	}
+	kpMsg, err := group.EncodeKeyPackageMessage(kp)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EncodeKeyPackageMessage: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tid := s.alloc()
+	s.txns[tid] = &pendingKP{suite: suite, kpMsg: kpMsg, initPriv: initPriv, encPriv: leafPriv, signer: signer}
+	return &pb.CreateKeyPackageResponse{
+		TransactionId:  tid,
+		KeyPackage:     kpMsg,
+		InitPriv:       initPriv,
+		EncryptionPriv: leafPriv,
+		SignaturePriv:  sigSeed,
+	}, nil
+}
+
+func (s *Server) JoinGroup(_ context.Context, req *pb.JoinGroupRequest) (*pb.JoinGroupResponse, error) {
+	if req.EncryptHandshake {
+		return nil, status.Error(codes.Unimplemented, "encrypted handshake not supported")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, ok := s.txns[req.TransactionId]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "unknown transaction_id %d", req.TransactionId)
+	}
+	g, err := group.JoinFromWelcome(tx.suite, req.Welcome, group.JoinOptions{
+		KeyPackage:     tx.kpMsg,
+		InitPriv:       tx.initPriv,
+		EncryptionPriv: tx.encPriv,
+		Signer:         tx.signer,
+		RatchetTree:    req.RatchetTree, // optional external tree
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "JoinFromWelcome: %v", err)
+	}
+	id := s.alloc()
+	s.states[id] = &state{suite: tx.suite, g: g}
+	return &pb.JoinGroupResponse{StateId: id, EpochAuthenticator: g.EpochAuthenticator()}, nil
+}
+
+func (s *Server) AddProposal(_ context.Context, req *pb.AddProposalRequest) (*pb.ProposalResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	kp, err := group.DecodeKeyPackageMessage(req.KeyPackage)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "DecodeKeyPackageMessage: %v", err)
+	}
+	msg, err := st.g.FrameProposal(group.ProposeAdd(kp))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "FrameProposal: %v", err)
+	}
+	return &pb.ProposalResponse{Proposal: msg}, nil
+}
+
+func (s *Server) UpdateProposal(_ context.Context, req *pb.UpdateProposalRequest) (*pb.ProposalResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	prop, err := st.g.ProposeUpdate()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ProposeUpdate: %v", err)
+	}
+	msg, err := st.g.FrameProposal(prop)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "FrameProposal: %v", err)
+	}
+	return &pb.ProposalResponse{Proposal: msg}, nil
+}
+
+func (s *Server) RemoveProposal(_ context.Context, req *pb.RemoveProposalRequest) (*pb.ProposalResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.getState(req.StateId)
+	if err != nil {
+		return nil, err
+	}
+	leaf, err := st.resolveIdentity(req.RemovedId)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := st.g.FrameProposal(group.ProposeRemove(leaf))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "FrameProposal: %v", err)
+	}
+	return &pb.ProposalResponse{Proposal: msg}, nil
 }
 
 func (s *Server) Free(_ context.Context, req *pb.FreeRequest) (*pb.FreeResponse, error) {

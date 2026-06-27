@@ -10,6 +10,9 @@ import (
 
 // Group is a member's view of one MLS group at the current epoch (RFC 9420 §8/§11).
 // signer may be nil for a pure passive receiver.
+//
+// Group is NOT safe for concurrent use; serialize all method calls on a Group
+// (callers needing concurrency must add their own locking).
 type Group struct {
 	suite        cipher.Suite
 	groupContext keyschedule.GroupContext

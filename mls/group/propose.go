@@ -29,8 +29,12 @@ func ProposeGroupContextExtensions(ext []tree.Extension) Proposal {
 //
 // NOTE: The proposer's new leaf_priv is not automatically installed when a
 // separate committer commits this Update by reference. Production callers must
-// track the returned leafPriv and call a future InstallUpdateKey helper once
-// ProcessCommit confirms the proposal (tracked as a TODO).
+// track the returned leafPriv and call InstallPendingUpdateKey before
+// ProcessCommit when this proposal is committed. Note: InstallPendingUpdateKey
+// mutates the group's stored private key before ProcessCommit; if the committed
+// update is superseded by a competing commit, the old key is already gone.
+// Automatic, atomic pending-update tracking is planned for the
+// membership-controller integration.
 func (g *Group) ProposeUpdate() (Proposal, []byte, error) {
 	leafPriv, leafPub, err := g.suite.GenerateHPKEKeyPair()
 	if err != nil {

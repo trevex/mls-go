@@ -40,6 +40,9 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 
 	// Build proposal cache from the by-reference proposals (same logic as
 	// ProcessCommit — UnmarshalMLS → UnprotectPublic → RefHash).
+	// Also build Commit.Proposals by-reference entries in the same pass so we
+	// never re-parse or swallow errors in a second loop.
+	var cm Commit
 	cache := make(map[string]cachedProposal, len(opt.ByReference))
 	for idx, propBytes := range opt.ByReference {
 		var m framing.MLSMessage
@@ -72,24 +75,11 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] parse body: %w", idx, err)
 		}
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
-	}
-
-	// Build Commit.Proposals: by-reference first, then by-value.
-	var cm Commit
-	for _, propBytes := range opt.ByReference {
-		var m framing.MLSMessage
-		if err := m.UnmarshalMLS(propBytes); err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: re-parse by-reference: %w", err)
-		}
-		gc := g.groupContext
-		senderLeaf := m.Public.Content.Sender.LeafIndex
-		senderLeafNode, _ := g.tree.LeafNodeAt(senderLeaf)
-		ac, _ := framing.UnprotectPublic(g.suite, senderLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
-		acBytes, _ := ac.MarshalMLS()
-		ref, _ := g.suite.RefHash("MLS 1.0 Proposal Reference", acBytes)
+		// Reuse the already-computed ref — no second parse needed.
 		cm.Proposals = append(cm.Proposals, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 	}
-	// Track added KeyPackages in order for Welcome construction.
+	// Append by-value proposals after by-reference ones; track added KeyPackages
+	// in order for Welcome construction.
 	var addedKPs []KeyPackage
 	for i := range opt.ByValue {
 		p := opt.ByValue[i]

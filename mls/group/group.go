@@ -20,7 +20,8 @@ type Group struct {
 	interim      []byte // interim_transcript_hash[current epoch]
 	initSecret   []byte // init_secret for the NEXT epoch's key schedule
 	ownLeaf      uint32
-	signer       crypto.Signer // own signing key (for generating; nil for pure receiver)
+	signer       crypto.Signer     // own signing key (for generating; nil for pure receiver)
+	externalPSKs map[string][]byte // psk_id (string) -> psk secret for external PSKs
 }
 
 // Epoch returns the current epoch number.

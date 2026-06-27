@@ -208,5 +208,6 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		initSecret:   es.InitSecret,
 		ownLeaf:      ownLeaf,
 		signer:       opt.Signer,
+		externalPSKs: opt.ExternalPSKs,
 	}, nil
 }

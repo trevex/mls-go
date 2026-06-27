@@ -5,6 +5,7 @@ go 1.26.4
 replace github.com/trevex/mls-mlkem-go => ../
 
 require (
+	github.com/trevex/mls-mlkem-go v0.0.0
 	google.golang.org/grpc v1.66.0
 	google.golang.org/protobuf v1.36.11
 )

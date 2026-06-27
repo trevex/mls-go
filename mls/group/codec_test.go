@@ -167,6 +167,55 @@ func TestProposalOrRefByReference(t *testing.T) {
 	proposalOrRefRoundTrip(t, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 }
 
+func commitRoundTrip(t *testing.T, cm Commit) {
+	t.Helper()
+	raw, err := cm.MarshalMLS()
+	if err != nil {
+		t.Fatalf("MarshalMLS: %v", err)
+	}
+	var cm2 Commit
+	if err := cm2.UnmarshalMLS(raw); err != nil {
+		t.Fatalf("UnmarshalMLS: %v", err)
+	}
+	raw2, err := cm2.MarshalMLS()
+	if err != nil {
+		t.Fatalf("re-MarshalMLS: %v", err)
+	}
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("round-trip mismatch:\n  first:  %x\n  second: %x", raw, raw2)
+	}
+}
+
+func TestCommitEmptyNoPath(t *testing.T) {
+	commitRoundTrip(t, Commit{})
+}
+
+func TestCommitMixedProposalsNoPath(t *testing.T) {
+	ref := []byte{0x01, 0x02, 0x03, 0x04}
+	removeProposal := Proposal{Type: ProposalTypeRemove, Remove: &Remove{Removed: 3}}
+	cm := Commit{
+		Proposals: []ProposalOrRef{
+			{Type: ProposalOrRefTypeReference, Reference: ref},
+			{Type: ProposalOrRefTypeProposal, Proposal: &removeProposal},
+		},
+		Path: nil,
+	}
+	commitRoundTrip(t, cm)
+}
+
+func TestCommitWithPath(t *testing.T) {
+	ln := minimalLeafNode()
+	up := tree.UpdatePath{
+		LeafNode: ln,
+		Nodes:    nil,
+	}
+	cm := Commit{
+		Proposals: nil,
+		Path:      &up,
+	}
+	commitRoundTrip(t, cm)
+}
+
 func TestKeyPackageRefLength(t *testing.T) {
 	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
 	if !ok {

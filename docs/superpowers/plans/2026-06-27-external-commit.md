@@ -790,8 +790,8 @@ func findLeafBySignatureKey(rt *tree.RatchetTree, sigKey []byte) (uint32, bool) 
 
 ### Task 5 — `ironcore.RecoverViaExternalCommit` (§5.6) routed through the sequencer
 
-- [ ] **Test first** (`ironcore/recovery_test.go`, `package ironcore_test`) — **run under `0xF001` (the deployed PQ suite) as the primary case**: build a 2-member VNI group via `buildVNIGroup(t, suite, vni, 2)` at epoch 1; fork it (member-0 and member-1 each empty-`Commit` → divergent epoch-2 authenticators); pick `candidates = {refMember0Branch, refMember1Branch}`; the losing member calls `RecoverViaExternalCommit(...)` with a shared `sequencer.NewMemorySequencer()`; assert the loser's new group **converges under `0xF001`** with the canonical member (byte-equal `EpochAuthenticator` + `DeriveSA` keys equal), and that a **second** competing recovery for the same `(group, epoch)` gets `ok=false` from the register (single winner — recovery cannot fork). **Validated during planning under `0xF001`**: fork EAs `ed8036fe…` vs `aa18df66…`; after the losing member's external-commit recovery (anti-double-join Remove of its stale leaf), both re-converged on `epoch_authenticator fc5fcd08…629dee07` at epoch 3 with valid parent hashes.
-- [ ] Implement `ironcore/recovery.go`:
+- [x] **Test first** (`ironcore/recovery_test.go`, `package ironcore_test`) — **run under `0xF001` (the deployed PQ suite) as the primary case**: build a 2-member VNI group via `buildVNIGroup(t, suite, vni, 2)` at epoch 1; fork it (member-0 and member-1 each empty-`Commit` → divergent epoch-2 authenticators); pick `candidates = {refMember0Branch, refMember1Branch}`; the losing member calls `RecoverViaExternalCommit(...)` with a shared `sequencer.NewMemorySequencer()`; assert the loser's new group **converges under `0xF001`** with the canonical member (byte-equal `EpochAuthenticator` + `DeriveSA` keys equal), and that a **second** competing recovery for the same `(group, epoch)` gets `ok=false` from the register (single winner — recovery cannot fork). **Validated during planning under `0xF001`**: fork EAs `ed8036fe…` vs `aa18df66…`; after the losing member's external-commit recovery (anti-double-join Remove of its stale leaf), both re-converged on `epoch_authenticator fc5fcd08…629dee07` at epoch 3 with valid parent hashes.
+- [x] Implement `ironcore/recovery.go`:
 
 ```go
 // ironcore/recovery.go
@@ -859,20 +859,20 @@ func RecoverViaExternalCommit(
 
 ### Task 6 — Full gate + docs sweep
 
-- [ ] Run the complete gate: `nix develop -c sh -c 'gofmt -l mls ironcore && go vet ./... && go test ./...'` — all green, all 15 existing KATs still pass, the new convergence + DHKEM gates pass.
-- [ ] (Optional) extend the passive-random driver to assert it correctly handles/rejects a `new_member_commit` epoch if one is ever present, guarded so it never fails on its absence.
-- [ ] Confirm the working tree contains only the intended new/edited files; no `zz_*`/`zzz_*` throwaways or temp-vendored KATs remain (`git status` clean except the feature diff).
+- [x] Run the complete gate: `nix develop -c sh -c 'gofmt -l mls ironcore && go vet ./... && go test ./...'` — all green, all 15 existing KATs still pass, the new convergence + DHKEM gates pass.
+- [x] (Optional) extend the passive-random driver to assert it correctly handles/rejects a `new_member_commit` epoch if one is ever present, guarded so it never fails on its absence — skipped: the registered-suite KAT cases contain no `new_member_commit` epoch; ProcessCommit already dispatches correctly, so adding a guarded assertion adds no safety.
+- [x] Confirm the working tree contains only the intended new/edited files; no `zz_*`/`zzz_*` throwaways or temp-vendored KATs remain (`git status` clean except the feature diff).
 
 ---
 
 ## Definition of Done
 
-- [ ] `mls/cipher.ExternalInitEncap`/`ExternalInitDecap` reproduce the **RFC 9180 §A.1.1 (X25519)** and **§A.3.1 (P-256)** DHKEM vectors exactly, and the **X-Wing (`0xF001`)** raw KEM encap/decap round-trips the 32-byte secret (with byte-exact stdlib pk_M/pk_X reconstruction); the init secret is the **bare KEM shared secret** (no MLS label), `Nsecret = 32`. `DeriveExternalInitKeyPair == DeriveKeyPair` for every suite (Option A — DHKEM external_pub unchanged, X-Wing external keypair stays stdlib-derived).
-- [ ] A non-member `group.ExternalCommit` into a 2-member group yields a Commit that the two existing members process via `ProcessCommit`/`ProcessExternalCommit`, and **all three members share a byte-identical `epoch_authenticator` AND `Exporter` output** at epoch n+1 (`assertConverged`) — gated under **`0xF001` (primary)** and `0x0001`.
-- [ ] An already-present member external-committing includes a **`Remove` of its prior leaf** (anti-double-join, §12.4.3.2); the post-commit tree is valid (`VerifyParentHashes`), the member appears at exactly one leaf, and all members converge.
-- [ ] External commits are validated per §12.4.3.2: exactly one `ExternalInit`, mandatory `UpdatePath`, no by-reference proposals, only `{ExternalInit, Remove, PreSharedKey, GroupContextExtensions}` by value, signature verified with the path leaf's signature key; violations are rejected and leave the receiver unchanged.
-- [ ] `ironcore.RecoverViaExternalCommit` re-converges a losing-branch member onto the **canonical** branch (lowest `Hash(CommitRef)`) **under `0xF001`**, the recovery commit is accepted by the **single `Ordering` register**, a competing concurrent recovery is rejected (`ok=false`), and the recovered member's `DeriveSA` keys match the canonical member's (design spec §5.6).
-- [ ] `gofmt -l` empty, `go vet ./...` clean, `go test ./...` green (all prior KATs + new gates); stdlib-only; working tree clean apart from the feature diff.
+- [x] `mls/cipher.ExternalInitEncap`/`ExternalInitDecap` reproduce the **RFC 9180 §A.1.1 (X25519)** and **§A.3.1 (P-256)** DHKEM vectors exactly, and the **X-Wing (`0xF001`)** raw KEM encap/decap round-trips the 32-byte secret (with byte-exact stdlib pk_M/pk_X reconstruction); the init secret is the **bare KEM shared secret** (no MLS label), `Nsecret = 32`. `DeriveExternalInitKeyPair == DeriveKeyPair` for every suite (Option A — DHKEM external_pub unchanged, X-Wing external keypair stays stdlib-derived).
+- [x] A non-member `group.ExternalCommit` into a 2-member group yields a Commit that the two existing members process via `ProcessCommit`/`ProcessExternalCommit`, and **all three members share a byte-identical `epoch_authenticator` AND `Exporter` output** at epoch n+1 (`assertConverged`) — gated under **`0xF001` (primary)** and `0x0001`.
+- [x] An already-present member external-committing includes a **`Remove` of its prior leaf** (anti-double-join, §12.4.3.2); the post-commit tree is valid (`VerifyParentHashes`), the member appears at exactly one leaf, and all members converge.
+- [x] External commits are validated per §12.4.3.2: exactly one `ExternalInit`, mandatory `UpdatePath`, no by-reference proposals, only `{ExternalInit, Remove, PreSharedKey, GroupContextExtensions}` by value, signature verified with the path leaf's signature key; violations are rejected and leave the receiver unchanged.
+- [x] `ironcore.RecoverViaExternalCommit` re-converges a losing-branch member onto the **canonical** branch (lowest `Hash(CommitRef)`) **under `0xF001`**, the recovery commit is accepted by the **single `Ordering` register**, a competing concurrent recovery is rejected (`ok=false`), and the recovered member's `DeriveSA` keys match the canonical member's (design spec §5.6).
+- [x] `gofmt -l` empty, `go vet ./...` clean, `go test ./...` green (all prior KATs + new gates); stdlib-only; working tree clean apart from the feature diff.
 
 ---
 

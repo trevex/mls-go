@@ -43,6 +43,9 @@ type Suite struct {
 	kem     hpke.KEM
 	kdf     hpke.KDF
 	aead    hpke.AEAD
+	// curve is the ecdh.Curve for DHKEM suites (0x0001 / 0x0002).
+	// It is nil for non-DHKEM suites (e.g. X-Wing 0xF001).
+	curve ecdh.Curve
 }
 
 var registry = map[CipherSuite]Suite{
@@ -53,6 +56,7 @@ var registry = map[CipherSuite]Suite{
 		kem:     hpke.DHKEM(ecdh.X25519()),
 		kdf:     hpke.HKDFSHA256(),
 		aead:    hpke.AES128GCM(),
+		curve:   ecdh.X25519(),
 	},
 	P256_AES128GCM_SHA256_P256: {
 		ID:      P256_AES128GCM_SHA256_P256,
@@ -61,6 +65,7 @@ var registry = map[CipherSuite]Suite{
 		kem:     hpke.DHKEM(ecdh.P256()),
 		kdf:     hpke.HKDFSHA256(),
 		aead:    hpke.AES128GCM(),
+		curve:   ecdh.P256(),
 	},
 }
 

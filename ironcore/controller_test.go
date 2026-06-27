@@ -439,3 +439,400 @@ func TestControllerLifecycle(t *testing.T) {
 	}
 	t.Logf("Gate1: 3 survivors converged at epoch 2, EA=%x", node0.Group().EpochAuthenticator())
 }
+
+// ─── Task 5: Rekey + GATE 3 (periodic rekey, PCS, make-before-break) ──────────
+
+// TestControllerRekeyPCS is Gate 3:
+//   - committer Rekey() advances epoch, SA.Key rotates, all converge
+//   - PreviousSA() exposes the pre-rekey SA (make-before-break, §10.4)
+//   - a non-committer Rekey() is a no-op (nil, false, nil)
+//   - PCS: removed node-2's stale SA.Key ≠ post-removal SA.Key (forward secrecy)
+func TestControllerRekeyPCS(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Build a converged 3-member group (node-0 committer, node-1, node-2).
+	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
+	node2, kpMsg2, initPriv2, leafPriv2 := mkNode(t, suite, testVNI, "node-2", seq, nil)
+
+	kpResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		switch string(identity) {
+		case "node-1":
+			return kpMsg1, true
+		case "node-2":
+			return kpMsg2, true
+		}
+		return nil, false
+	})
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver)
+
+	result, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1"), []byte("node-2")})
+	if err != nil || !result.Committed || !result.Won {
+		t.Fatalf("Reconcile add: %+v err=%v", result, err)
+	}
+	if err := node1.JoinViaWelcome(result.WelcomeMsg, kpMsg1, initPriv1, leafPriv1); err != nil {
+		t.Fatalf("node-1.JoinViaWelcome: %v", err)
+	}
+	if err := node2.JoinViaWelcome(result.WelcomeMsg, kpMsg2, initPriv2, leafPriv2); err != nil {
+		t.Fatalf("node-2.JoinViaWelcome: %v", err)
+	}
+	all3 := []*ironcore.Controller{node0, node1, node2}
+	assertControllerConverged(t, "pre-rekey", all3...)
+
+	// Non-committer Rekey is a no-op.
+	nopMsg, nopWon, nopErr := node1.Rekey(ctx)
+	if nopErr != nil || nopWon || len(nopMsg) != 0 {
+		t.Fatalf("non-committer Rekey: got commitMsg=%x won=%v err=%v, want (nil,false,nil)",
+			nopMsg, nopWon, nopErr)
+	}
+
+	// Capture pre-rekey SA.
+	preRekeySA, err := node0.CurrentSA()
+	if err != nil {
+		t.Fatalf("pre-rekey CurrentSA: %v", err)
+	}
+
+	// Committer Rekey.
+	commitMsg, won, err := node0.Rekey(ctx)
+	if err != nil || !won {
+		t.Fatalf("node0.Rekey: won=%v err=%v", won, err)
+	}
+	if len(commitMsg) == 0 {
+		t.Fatal("node0.Rekey: empty commitMsg")
+	}
+
+	// Broadcast rekey commit to all members.
+	if err := node1.HandleCommit(commitMsg); err != nil {
+		t.Fatalf("node-1.HandleCommit(rekey): %v", err)
+	}
+	if err := node2.HandleCommit(commitMsg); err != nil {
+		t.Fatalf("node-2.HandleCommit(rekey): %v", err)
+	}
+	assertControllerConverged(t, "post-rekey", all3...)
+	t.Logf("Gate3: 3 nodes converged after Rekey, EA=%x", node0.Group().EpochAuthenticator())
+
+	// SA.Key should have rotated.
+	postRekeySA, err := node0.CurrentSA()
+	if err != nil {
+		t.Fatalf("post-rekey CurrentSA: %v", err)
+	}
+	if bytes.Equal(preRekeySA.Key, postRekeySA.Key) {
+		t.Fatal("SA.Key should differ after Rekey (key rotation)")
+	}
+
+	// PreviousSA exposes the pre-rekey SA (make-before-break §10.4).
+	prevSA, prevOK := node0.PreviousSA()
+	if !prevOK {
+		t.Fatal("PreviousSA() ok should be true after Rekey")
+	}
+	if !bytes.Equal(prevSA.Key, preRekeySA.Key) {
+		t.Fatalf("PreviousSA().Key should equal pre-rekey SA.Key\n  got  %x\n  want %x",
+			prevSA.Key, preRekeySA.Key)
+	}
+
+	// PCS: capture node-2's stale SA, remove it, rekey survivors, assert stale ≠ new.
+	staleNode2SA, err := node2.CurrentSA()
+	if err != nil {
+		t.Fatalf("node-2 stale CurrentSA: %v", err)
+	}
+
+	result2, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1")})
+	if err != nil || !result2.Committed || !result2.Won {
+		t.Fatalf("Reconcile remove node-2: %+v err=%v", result2, err)
+	}
+	if err := node2.HandleCommit(result2.CommitMsg); err != ironcore.ErrSelfRemoved {
+		t.Fatalf("node-2.HandleCommit: want ErrSelfRemoved, got %v", err)
+	}
+	if err := node1.HandleCommit(result2.CommitMsg); err != nil {
+		t.Fatalf("node-1.HandleCommit(remove node-2): %v", err)
+	}
+	assertControllerConverged(t, "post-remove", node0, node1)
+
+	// Rekey survivors (PCS: forward secret from removed node-2).
+	rekeyMsg2, won2, err := node0.Rekey(ctx)
+	if err != nil || !won2 {
+		t.Fatalf("second Rekey: won=%v err=%v", won2, err)
+	}
+	if err := node1.HandleCommit(rekeyMsg2); err != nil {
+		t.Fatalf("node-1.HandleCommit(second rekey): %v", err)
+	}
+
+	// Post-rekey SA ≠ stale SA of removed node-2 (PCS property §10.3).
+	postRemovalSA, err := node0.CurrentSA()
+	if err != nil {
+		t.Fatalf("post-removal CurrentSA: %v", err)
+	}
+	if bytes.Equal(staleNode2SA.Key, postRemovalSA.Key) {
+		t.Fatal("PCS: removed node-2 stale SA.Key should differ from post-removal SA.Key")
+	}
+	t.Logf("Gate3: PCS confirmed — stale %x… ≠ post-removal %x…",
+		staleNode2SA.Key[:4], postRemovalSA.Key[:4])
+}
+
+// ─── Task 6: GATE 2 (committer handover) ──────────────────────────────────────
+
+// TestControllerHandover is Gate 2:
+//   - removing the sitting committer (node-0) → node-0's own Reconcile is a no-op
+//   - the lowest surviving leaf (node-1 = committer-elect) commits the removal
+//   - node-0 gets ErrSelfRemoved; IsCommitter() flips to node-1
+//   - node-1 drives a follow-on Rekey; node-1 + node-2 converge
+func TestControllerHandover(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
+	node2, kpMsg2, initPriv2, leafPriv2 := mkNode(t, suite, testVNI, "node-2", seq, nil)
+
+	kpResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		switch string(identity) {
+		case "node-1":
+			return kpMsg1, true
+		case "node-2":
+			return kpMsg2, true
+		}
+		return nil, false
+	})
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver)
+
+	result, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1"), []byte("node-2")})
+	if err != nil || !result.Committed || !result.Won {
+		t.Fatalf("Reconcile add: %+v err=%v", result, err)
+	}
+	if err := node1.JoinViaWelcome(result.WelcomeMsg, kpMsg1, initPriv1, leafPriv1); err != nil {
+		t.Fatalf("node-1.JoinViaWelcome: %v", err)
+	}
+	if err := node2.JoinViaWelcome(result.WelcomeMsg, kpMsg2, initPriv2, leafPriv2); err != nil {
+		t.Fatalf("node-2.JoinViaWelcome: %v", err)
+	}
+	assertControllerConverged(t, "pre-handover", node0, node1, node2)
+
+	// Verify initial committer assignment.
+	if !node0.IsCommitter() {
+		t.Fatal("node-0 should be committer before handover")
+	}
+	if node1.IsCommitter() || node2.IsCommitter() {
+		t.Fatal("node-1/node-2 should not be committer before handover")
+	}
+
+	// desired2 removes node-0.
+	desired2 := [][]byte{[]byte("node-1"), []byte("node-2")}
+
+	// node-0's own Reconcile: no-op (§12.1.3 — committer in removeSet → handover;
+	// node-0 != committer-elect (node-1) → returns Committed=false).
+	result0, err := node0.Reconcile(ctx, desired2)
+	if err != nil {
+		t.Fatalf("node-0.Reconcile(remove self): %v", err)
+	}
+	if result0.Committed {
+		t.Fatal("node-0.Reconcile(remove self): Committed should be false (handover no-op)")
+	}
+
+	// node-1 is the committer-elect; it commits Remove(node-0).
+	result1, err := node1.Reconcile(ctx, desired2)
+	if err != nil {
+		t.Fatalf("node-1.Reconcile(handover commit): %v", err)
+	}
+	if !result1.Committed {
+		t.Fatal("node-1.Reconcile: Committed should be true (node-1 is committer-elect)")
+	}
+	if !result1.Won {
+		t.Fatalf("node-1.Reconcile: Won should be true, got false")
+	}
+	if len(result1.Removed) != 1 {
+		t.Fatalf("node-1.Reconcile: Removed=%v, want 1 leaf (node-0)", result1.Removed)
+	}
+
+	// node-0's HandleCommit → ErrSelfRemoved.
+	if err := node0.HandleCommit(result1.CommitMsg); err != ironcore.ErrSelfRemoved {
+		t.Fatalf("node-0.HandleCommit: want ErrSelfRemoved, got %v", err)
+	}
+
+	// node-2 processes the commit.
+	if err := node2.HandleCommit(result1.CommitMsg); err != nil {
+		t.Fatalf("node-2.HandleCommit(handover): %v", err)
+	}
+
+	// IsCommitter() flips to node-1 (lowest active leaf is now 1).
+	if !node1.IsCommitter() {
+		t.Fatal("node-1 should be committer after handover")
+	}
+	if node2.IsCommitter() {
+		t.Fatal("node-2 should not be committer after handover")
+	}
+	t.Logf("Gate2: handover confirmed — node-1 is committer at epoch %d", node1.Epoch())
+
+	// node-1 (new committer) drives a follow-on Rekey; both converge.
+	rekeyMsg, won, err := node1.Rekey(ctx)
+	if err != nil || !won {
+		t.Fatalf("node-1.Rekey: won=%v err=%v", won, err)
+	}
+	if err := node2.HandleCommit(rekeyMsg); err != nil {
+		t.Fatalf("node-2.HandleCommit(post-handover rekey): %v", err)
+	}
+	assertControllerConverged(t, "gate2-converged", node1, node2)
+	t.Logf("Gate2: node-1 and node-2 converged at epoch %d, EA=%x",
+		node1.Epoch(), node1.Group().EpochAuthenticator())
+}
+
+// ─── Task 7: Join paths (JoinViaExternalCommit + PublishGroupInfo) ─────────────
+
+// TestControllerJoinViaExternalCommit verifies:
+//   - a new node joins an existing converged group via external commit
+//   - existing members HandleCommit the external commit; all converge
+//   - a superseded external join (stale GroupInfo) returns ErrJoinSuperseded
+func TestControllerJoinViaExternalCommit(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Build a converged 2-member group (node-0 + node-1 via Welcome).
+	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
+	kpResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		if string(identity) == "node-1" {
+			return kpMsg1, true
+		}
+		return nil, false
+	})
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver)
+
+	result, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1")})
+	if err != nil || !result.Committed || !result.Won {
+		t.Fatalf("Reconcile add node-1: %+v err=%v", result, err)
+	}
+	if err := node1.JoinViaWelcome(result.WelcomeMsg, kpMsg1, initPriv1, leafPriv1); err != nil {
+		t.Fatalf("node-1.JoinViaWelcome: %v", err)
+	}
+	assertControllerConverged(t, "pre-external-join", node0, node1)
+
+	// Publish GroupInfo at current epoch for external join.
+	gi, err := node0.PublishGroupInfo()
+	if err != nil {
+		t.Fatalf("node0.PublishGroupInfo: %v", err)
+	}
+
+	// node-2 joins via external commit against the current GroupInfo.
+	node2, _, _, _ := mkNode(t, suite, testVNI, "node-2", seq, nil)
+	extCommitMsg, err := node2.JoinViaExternalCommit(ctx, gi)
+	if err != nil {
+		t.Fatalf("node-2.JoinViaExternalCommit: %v", err)
+	}
+
+	// Existing members process the external commit.
+	if err := node0.HandleCommit(extCommitMsg); err != nil {
+		t.Fatalf("node-0.HandleCommit(ext-join): %v", err)
+	}
+	if err := node1.HandleCommit(extCommitMsg); err != nil {
+		t.Fatalf("node-1.HandleCommit(ext-join): %v", err)
+	}
+
+	// All 3 nodes converge.
+	assertControllerConverged(t, "post-external-join", node0, node1, node2)
+	t.Logf("Task7: 3 nodes converged after external-commit join, EA=%x",
+		node0.Group().EpochAuthenticator())
+
+	// ErrJoinSuperseded: a competing external join at the now-decided epoch.
+	// node-3 uses the same stale GroupInfo (epoch already decided by node-2's join).
+	node3, _, _, _ := mkNode(t, suite, testVNI, "node-3", seq, nil)
+	_, err = node3.JoinViaExternalCommit(ctx, gi)
+	if err != ironcore.ErrJoinSuperseded {
+		t.Fatalf("stale external join: want ErrJoinSuperseded, got %v", err)
+	}
+}
+
+// ─── Task 8: AutoRecover + GATE 4 (fork → auto-recovery) ─────────────────────
+
+// TestControllerAutoRecovery is Gate 4:
+//   - 2-member group; committer Rekey wins the linearization slot
+//   - a concurrent competing commit at the same epoch gets ok=false (fork)
+//   - the losing controller AutoRecovers via external commit onto the canonical branch
+//   - both converge (byte-equal EA + SA.Key) at the recovered epoch
+func TestControllerAutoRecovery(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Build a 2-member group: node-0 (committer, leaf 0), node-1 (leaf 1).
+	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
+	kpResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		if string(identity) == "node-1" {
+			return kpMsg1, true
+		}
+		return nil, false
+	})
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver)
+
+	result, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1")})
+	if err != nil || !result.Committed || !result.Won {
+		t.Fatalf("Reconcile add node-1: %+v err=%v", result, err)
+	}
+	if err := node1.JoinViaWelcome(result.WelcomeMsg, kpMsg1, initPriv1, leafPriv1); err != nil {
+		t.Fatalf("node-1.JoinViaWelcome: %v", err)
+	}
+	assertControllerConverged(t, "pre-fork", node0, node1)
+
+	// Capture base epoch before the fork.
+	baseEpoch := node1.Epoch() // == node0.Epoch() (both at the same epoch after join)
+
+	// node-0 (committer) Rekeys — wins the linearization slot at baseEpoch.
+	rekeyMsg, won, err := node0.Rekey(ctx)
+	if err != nil || !won {
+		t.Fatalf("node0.Rekey: won=%v err=%v", won, err)
+	}
+	_ = rekeyMsg // node-1 has NOT processed it (simulating concurrent competing commit)
+
+	// node-1 makes a competing commit at baseEpoch (still at baseEpoch since it
+	// hasn't seen node-0's Rekey commit). This simulates the §5.3 fork scenario.
+	forkCommit, _, forkErr := node1.Group().Commit(group.CommitOptions{})
+	if forkErr != nil {
+		t.Fatalf("node-1 fork commit: %v", forkErr)
+	}
+	forkRef := group.CommitRef(suite.Hash(forkCommit))
+
+	// Register the fork commit with the shared sequencer → must be rejected (ok=false)
+	// because node-0's Rekey already won the (gid, baseEpoch) slot.
+	gid := group.GroupID(ironcore.GroupID(testVNI))
+	okFork, err := seq.AcceptCommit(ctx, gid, baseEpoch, forkRef)
+	if err != nil {
+		t.Fatalf("AcceptCommit(fork): %v", err)
+	}
+	if okFork {
+		t.Fatal("fork commit should be rejected (ok=false); node-0's Rekey already won the slot")
+	}
+	// node-1 is now on the dead fork branch (baseEpoch+1, diverged from canonical).
+
+	// Retrieve the canonical ref (the commit that won the baseEpoch slot).
+	canonRef, found := seq.Decided(gid, baseEpoch)
+	if !found {
+		t.Fatal("sequencer has no decided commit for baseEpoch")
+	}
+
+	// node-0 publishes GroupInfo at the canonical epoch (baseEpoch+1).
+	gi, err := node0.PublishGroupInfo()
+	if err != nil {
+		t.Fatalf("node0.PublishGroupInfo: %v", err)
+	}
+
+	// node-1 auto-recovers onto the canonical branch.
+	// candidates = [canonRef] (the decided winner); fetchGI returns node-0's GroupInfo.
+	recoveryMsg, err := node1.AutoRecover(ctx,
+		[]group.CommitRef{canonRef},
+		func(_ group.CommitRef) (*group.GroupInfo, error) {
+			return gi, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("node1.AutoRecover: %v", err)
+	}
+
+	// node-0 processes the recovery external commit (advances to recovered epoch).
+	if err := node0.HandleCommit(recoveryMsg); err != nil {
+		t.Fatalf("node0.HandleCommit(recovery): %v", err)
+	}
+
+	// Both converge at the recovered epoch.
+	assertControllerConverged(t, "gate4-recovered", node0, node1)
+	t.Logf("Gate4: fork recovered — node-0 and node-1 converged at epoch %d, EA=%x",
+		node0.Epoch(), node0.Group().EpochAuthenticator())
+}

@@ -194,6 +194,10 @@ func (t *RatchetTree) Merge(senderLeaf uint32, up *UpdatePath) error {
 // §7.5/§7.6). It does not mutate the tree; groupContext is the serialized
 // provisional GroupContext for the new epoch.
 //
+// If the receiver holds no private key for any node on the path (e.g. an
+// excluded or newly-added member), it returns a nil commit secret; callers
+// rely on the epoch confirmation_tag verification as the integrity backstop.
+//
 // newlyAdded is the list of leaf indices added by Add proposals in the same
 // commit. Senders MAY omit encrypted path secrets for these leaves (RFC 9420
 // §7.5); they are excluded when computing the ciphertext index into each

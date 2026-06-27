@@ -6,6 +6,7 @@ package group_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
@@ -50,7 +51,7 @@ func TestPassiveWelcome(t *testing.T) {
 		}
 
 		tc := tc
-		t.Run("suite"+string(rune('0'+tc.CipherSuite))+"_"+string(rune('0'+i%10)), func(t *testing.T) {
+		t.Run(fmt.Sprintf("suite%d_case%d", tc.CipherSuite, i), func(t *testing.T) {
 			signer, _ := buildSigner(cipher.CipherSuite(tc.CipherSuite), tc.SignaturePriv)
 
 			externalPSKs := make(map[string][]byte, len(tc.ExternalPSKs))

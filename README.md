@@ -7,7 +7,7 @@ exchange.**
 | | |
 |---|---|
 | **Conformance** | 15 official MLS Known-Answer Tests pass (RFC 9420 vectors) |
-| **Interop** | Validated against **OpenMLS** on suite 1 (PublicMessage + PrivateMessage) via the official mlswg test-runner |
+| **Interop** | Validated against **OpenMLS** on suite 1 (PublicMessage) via the official mlswg test-runner; the e2e gate also runs an encrypted (PrivateMessage) pass |
 | **Gate** | 21-subtest gRPC self-conformance gate (suites 0x0001, 0x0002, 0xF001) |
 | **Dependencies** | Root module is **stdlib-only** — zero third-party Go deps |
 | **Toolchain** | Go via Nix (`nix develop`); `GOTOOLCHAIN=local` |
@@ -110,11 +110,10 @@ make e2e-openmls       # clone + build OpenMLS and the mlswg runner, run interop
 This builds OpenMLS's `interop_client` (Rust) and the official mlswg
 `test-runner`, starts our gRPC server alongside OpenMLS, and runs a set of
 known-interoperable scenarios on **suite 1**
-(`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`). The gate runs **two passes**:
-a PublicMessage-handshake pass and an encrypted (PrivateMessage) handshake pass,
-so both framing modes are cross-stack validated.
-It is reproducible from a clean checkout (clone-if-absent, idempotent rebuilds)
-and exits 0 only if every scenario passes across all role assignments. It
+(`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`). The gate runs **two passes** — a PublicMessage-handshake pass and an encrypted
+(PrivateMessage) handshake pass — and exits 0 only if every role assignment
+passes in both.
+It is reproducible from a clean checkout (clone-if-absent, idempotent rebuilds). It
 requires the Rust toolchain, so `make e2e-openmls` runs it in the `e2e` Nix
 shell; you can also invoke it directly:
 

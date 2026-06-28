@@ -3,8 +3,11 @@
 
 # Build outputs
 /interop/mls-interop
+/metalsim
+/cmd/metalsim/metalsim
 *.out
 *.test
 
 # Editor / OS cruft
 .DS_Store
+.direnv/

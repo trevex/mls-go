@@ -78,15 +78,13 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 		// Reuse the already-computed ref — no second parse needed.
 		cm.Proposals = append(cm.Proposals, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 	}
-	// Append by-value proposals after by-reference ones; track added KeyPackages
-	// in order for Welcome construction.
-	var addedKPs []KeyPackage
+	// Append by-value proposals after by-reference ones. The added members'
+	// KeyPackages (for Welcome construction) are collected by applyProposals
+	// below, so they cover BOTH by-value and by-reference Adds in commit order
+	// (RFC 9420 §12.4.3.1) — not just the by-value ones.
 	for i := range opt.ByValue {
 		p := opt.ByValue[i]
 		cm.Proposals = append(cm.Proposals, ProposalOrRef{Type: ProposalOrRefTypeProposal, Proposal: &p})
-		if p.Type == ProposalTypeAdd && p.Add != nil {
-			addedKPs = append(addedKPs, p.Add.KeyPackage)
-		}
 	}
 
 	// Step 2: Apply proposals in §12.3 order on the working clone.
@@ -96,7 +94,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	}
 	resumptionPSKs[g.groupContext.Epoch] = g.epoch.ResumptionPSK
 
-	provisionalExt, epochPSKs, _, newlyAdded, err := applyProposals(
+	provisionalExt, epochPSKs, _, newlyAdded, addedKPs, err := applyProposals(
 		g.suite, wt, cm, cache,
 		g.groupContext.Extensions, g.externalPSKs, resumptionPSKs,
 		g.groupContext.GroupID, g.ownLeaf,

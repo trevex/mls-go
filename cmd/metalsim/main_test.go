@@ -15,7 +15,7 @@ func withDiscardedStdout(t *testing.T, fn func()) {
 	if err != nil {
 		t.Fatalf("open %s: %v", os.DevNull, err)
 	}
-	defer devnull.Close()
+	defer func() { _ = devnull.Close() }()
 	orig := os.Stdout
 	os.Stdout = devnull
 	defer func() { os.Stdout = orig }()

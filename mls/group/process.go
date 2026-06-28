@@ -31,6 +31,11 @@ type cachedProposal struct {
 // this commit. Senders MAY omit path-secret ciphertexts for these leaves
 // (RFC 9420 §7.5); callers must pass this list to ProcessUpdatePath so it can
 // correctly compute the ciphertext index.
+//
+// addedKPs holds the KeyPackage of each member added by an Add proposal, in the
+// SAME order as newlyAdded (commit order), for both by-value and by-reference
+// Adds. The committer uses these to build a Welcome for every newly-added
+// member (RFC 9420 §12.4.3.1); ProcessCommit ignores them.
 func applyProposals(
 	suite cipher.Suite,
 	wt *tree.RatchetTree,
@@ -41,7 +46,7 @@ func applyProposals(
 	resumptionPSKs map[uint64][]byte,
 	groupID []byte,
 	committerLeaf uint32,
-) (provisionalExt []tree.Extension, psks []keyschedule.PSK, pathRequired bool, newlyAdded []uint32, err error) {
+) (provisionalExt []tree.Extension, psks []keyschedule.PSK, pathRequired bool, newlyAdded []uint32, addedKPs []KeyPackage, err error) {
 	// Step 1: Resolve all ProposalOrRef into (proposal, sender) pairs, in
 	// commit order.
 	type resolved struct {
@@ -53,17 +58,17 @@ func applyProposals(
 		switch por.Type {
 		case ProposalOrRefTypeProposal:
 			if por.Proposal == nil {
-				return nil, nil, false, nil, fmt.Errorf("group: applyProposals: by-value ProposalOrRef has nil Proposal")
+				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: by-value ProposalOrRef has nil Proposal")
 			}
 			allResolved = append(allResolved, resolved{proposal: *por.Proposal, sender: committerLeaf})
 		case ProposalOrRefTypeReference:
 			cp, ok := cache[string(por.Reference)]
 			if !ok {
-				return nil, nil, false, nil, fmt.Errorf("group: applyProposals: ProposalRef %x not in cache", por.Reference)
+				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: ProposalRef %x not in cache", por.Reference)
 			}
 			allResolved = append(allResolved, resolved{proposal: cp.proposal, sender: cp.sender})
 		default:
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: unknown ProposalOrRefType %d", por.Type)
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: unknown ProposalOrRefType %d", por.Type)
 		}
 	}
 
@@ -94,20 +99,20 @@ func applyProposals(
 	// Update.
 	for _, r := range updates {
 		if r.proposal.Update == nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: Update proposal body is nil")
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: Update proposal body is nil")
 		}
 		if err := wt.UpdateLeaf(r.sender, r.proposal.Update.LeafNode); err != nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: UpdateLeaf(%d): %w", r.sender, err)
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: UpdateLeaf(%d): %w", r.sender, err)
 		}
 	}
 
 	// Remove.
 	for _, r := range removes {
 		if r.proposal.Remove == nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: Remove proposal body is nil")
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: Remove proposal body is nil")
 		}
 		if err := wt.RemoveLeaf(r.proposal.Remove.Removed); err != nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: RemoveLeaf(%d): %w", r.proposal.Remove.Removed, err)
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: RemoveLeaf(%d): %w", r.proposal.Remove.Removed, err)
 		}
 	}
 
@@ -117,20 +122,25 @@ func applyProposals(
 	// ProcessUpdatePath for correct ciphertext-index alignment.
 	for _, r := range adds {
 		if r.proposal.Add == nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: Add proposal body is nil")
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: Add proposal body is nil")
 		}
 		li, err := wt.AddLeaf(r.proposal.Add.KeyPackage.LeafNode)
 		if err != nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: AddLeaf: %w", err)
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: AddLeaf: %w", err)
 		}
 		newlyAdded = append(newlyAdded, li)
+		// Collect the added member's KeyPackage in the SAME order as newlyAdded
+		// (commit order), regardless of whether the Add was committed by value or
+		// by reference. The committer needs these to build a Welcome for every
+		// newly-added member (RFC 9420 §12.4.3.1).
+		addedKPs = append(addedKPs, r.proposal.Add.KeyPackage)
 	}
 
 	// GroupContextExtensions (last one wins).
 	provisionalExt = currentExt
 	for _, r := range gces {
 		if r.proposal.GroupContextExtensions == nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: GCE proposal body is nil")
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: GCE proposal body is nil")
 		}
 		provisionalExt = r.proposal.GroupContextExtensions.Extensions
 	}
@@ -141,33 +151,33 @@ func applyProposals(
 			continue
 		}
 		if r.proposal.PreSharedKey == nil {
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: PreSharedKey proposal body is nil")
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: PreSharedKey proposal body is nil")
 		}
 		id := r.proposal.PreSharedKey.PSK
 		switch id.PSKType {
 		case keyschedule.PSKTypeExternal:
 			pskBytes, ok := externalPSKs[string(id.PSKID)]
 			if !ok {
-				return nil, nil, false, nil, fmt.Errorf("group: applyProposals: external PSK %x not found", id.PSKID)
+				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: external PSK %x not found", id.PSKID)
 			}
 			psks = append(psks, keyschedule.PSK{ID: id, PSK: pskBytes})
 		case keyschedule.PSKTypeResumption:
 			// Resumption PSKs reference a specific epoch of a specific group (RFC 9420 §8.4).
 			// We only support the case where the PSKGroupID matches our group.
 			if !bytes.Equal(id.PSKGroupID, groupID) {
-				return nil, nil, false, nil, fmt.Errorf("group: applyProposals: resumption PSK references foreign group %x", id.PSKGroupID)
+				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: resumption PSK references foreign group %x", id.PSKGroupID)
 			}
 			pskBytes, ok := resumptionPSKs[id.PSKEpoch]
 			if !ok {
-				return nil, nil, false, nil, fmt.Errorf("group: applyProposals: resumption PSK for epoch %d not in history", id.PSKEpoch)
+				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: resumption PSK for epoch %d not in history", id.PSKEpoch)
 			}
 			psks = append(psks, keyschedule.PSK{ID: id, PSK: pskBytes})
 		default:
-			return nil, nil, false, nil, fmt.Errorf("group: applyProposals: unknown PSKType %d", id.PSKType)
+			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: unknown PSKType %d", id.PSKType)
 		}
 	}
 
-	return provisionalExt, psks, pathRequired, newlyAdded, nil
+	return provisionalExt, psks, pathRequired, newlyAdded, addedKPs, nil
 }
 
 // resolveOwnUpdatePriv returns the pending leaf private key for an Update in cm
@@ -310,7 +320,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	// Also include the current epoch (it may not be in history if it was just set).
 	resumptionPSKs[g.groupContext.Epoch] = g.epoch.ResumptionPSK
 
-	provisionalExt, epochPSKs, _, newlyAdded, err := applyProposals(
+	provisionalExt, epochPSKs, _, newlyAdded, _, err := applyProposals(
 		g.suite, wt, cm, cache,
 		g.groupContext.Extensions, g.externalPSKs, resumptionPSKs,
 		g.groupContext.GroupID, committerLeaf,

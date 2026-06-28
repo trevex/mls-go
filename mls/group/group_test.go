@@ -152,7 +152,7 @@ func TestApplyProposals(t *testing.T) {
 	}
 
 	cache := make(map[string]cachedProposal)
-	provisionalExt, psks, pathRequired, _, err := applyProposals(
+	provisionalExt, psks, pathRequired, _, _, err := applyProposals(
 		suite, rt, cm, cache, nil, nil, nil, nil, 0,
 	)
 	if err != nil {

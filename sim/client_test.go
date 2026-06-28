@@ -378,3 +378,180 @@ func TestForkDetectedRegistry(t *testing.T) {
 		t.Fatal("epoch 4 should not be divergent with only one authenticator")
 	}
 }
+
+// ─── Task 8 tests ─────────────────────────────────────────────────────────────
+
+// TestSACacheRetainsW: after advancing through > W epochs, the saCache holds
+// exactly the last W+1 epochs (current epoch inclusive) and trims older ones.
+func TestSACacheRetainsW(t *testing.T) {
+	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 20)
+
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
+	cA.foundVNI(100)
+
+	// foundVNI caches epoch 0.
+	if len(cA.vnis[100].saCache) == 0 {
+		t.Fatal("saCache should have epoch 0 after foundVNI")
+	}
+
+	// Advance through W+2 more epochs via rekey (total W+3 transitions).
+	W := cA.W // 2
+	for i := 0; i < W+3; i++ {
+		cA.rekey(100)
+		drainAll(s, []*Client{cA}, []*DS{ds0, ds1}, m)
+	}
+
+	cur := cA.vnis[100].ctrl.Epoch()
+	cache := cA.vnis[100].saCache
+
+	// Cache must contain exactly epochs [cur-W .. cur] (W+1 entries).
+	expectedCount := W + 1
+	if len(cache) != expectedCount {
+		t.Fatalf("saCache size: want %d (W+1), got %d", expectedCount, len(cache))
+	}
+	for e := range cache {
+		if e < cur-uint64(W) || e > cur {
+			t.Fatalf("saCache contains out-of-window epoch %d (cur=%d, W=%d)", e, cur, W)
+		}
+	}
+
+	// Current epoch's SA must match CurrentSA().
+	curSA, err := cA.vnis[100].ctrl.CurrentSA()
+	if err != nil {
+		t.Fatal("CurrentSA:", err)
+	}
+	cached, ok := cache[cur]
+	if !ok {
+		t.Fatal("current epoch not in saCache")
+	}
+	if !bytes.Equal(curSA.Key, cached.Key) {
+		t.Fatal("cached SA key mismatch with CurrentSA")
+	}
+}
+
+// TestSendEpochIsMin: sendEpoch(vni) returns the minimum over the client's own
+// epoch and all peer epochs seen via heartbeats.
+func TestSendEpochIsMin(t *testing.T) {
+	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 21)
+	_ = ds0; _ = ds1
+
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
+	cA.foundVNI(100)
+
+	// No peers known → sendEpoch == own epoch (0).
+	if cA.sendEpoch(100) != 0 {
+		t.Fatalf("sendEpoch with no peers: want 0, got %d", cA.sendEpoch(100))
+	}
+
+	// Advance A to epoch 3 via repeated rekey.
+	for i := 0; i < 3; i++ {
+		cA.rekey(100)
+		drainAll(s, []*Client{cA}, []*DS{ds0, ds1}, m)
+	}
+	ownEpoch := cA.vnis[100].ctrl.Epoch()
+	if ownEpoch != 3 {
+		t.Fatalf("expected A at epoch 3, got %d", ownEpoch)
+	}
+
+	// With no peers, sendEpoch == 3.
+	if cA.sendEpoch(100) != 3 {
+		t.Fatalf("sendEpoch with no peers at epoch 3: want 3, got %d", cA.sendEpoch(100))
+	}
+
+	// Inject a peer at epoch 1 (behind A).
+	peerID := ActorID(5)
+	cA.vnis[100].peerEpoch[peerID] = 1
+
+	// sendEpoch must return 1 (the group-wide min).
+	got := cA.sendEpoch(100)
+	if got != 1 {
+		t.Fatalf("sendEpoch with peer at 1: want 1, got %d", got)
+	}
+
+	// Inject another peer at epoch 2.
+	cA.vnis[100].peerEpoch[ActorID(6)] = 2
+	got = cA.sendEpoch(100)
+	if got != 1 {
+		t.Fatalf("sendEpoch with peers at 1,2: want 1, got %d", got)
+	}
+
+	// Remove slower peer: min now 2.
+	delete(cA.vnis[100].peerEpoch, peerID)
+	got = cA.sendEpoch(100)
+	if got != 2 {
+		t.Fatalf("sendEpoch after removing peer at 1: want 2, got %d", got)
+	}
+
+	_ = b; _ = m; _ = checker
+}
+
+// TestDataDecryptableUnderLag: packets sent at the group min-epoch are
+// decryptable by a receiver whose spread (cur - sendEpoch) ≤ W. Under W=2 and
+// a lag of 1, there must be zero PACKET-LOSS events (inv. 5 holds).
+func TestDataDecryptableUnderLag(t *testing.T) {
+	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 22)
+
+	sigA := makeSigner(); dir.register("A", sigA)
+	sigB := makeSigner(); dir.register("B", sigB)
+
+	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
+	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)
+
+	cA.foundVNI(100)
+	cB.prospectiveVNI(100)
+
+	// Build 2-member group.
+	cA.reconcile(100, [][]byte{[]byte("A"), []byte("B")})
+	drainAll(s, []*Client{cA, cB}, []*DS{ds0, ds1}, m)
+	if !cB.vnis[100].joined {
+		t.Fatal("B did not join")
+	}
+
+	// Both at epoch E (same). Let each member learn the peer epoch via heartbeat.
+	cA.vnis[100].peerEpoch[cB.id] = cB.vnis[100].ctrl.Epoch()
+	cB.vnis[100].peerEpoch[cA.id] = cA.vnis[100].ctrl.Epoch()
+
+	// A rekeys → A at epoch E+1. B still at E.
+	cA.rekey(100)
+	drainAll(s, []*Client{cA}, []*DS{ds0, ds1}, m) // B misses rekey
+
+	epochA := cA.vnis[100].ctrl.Epoch()
+	epochB := cB.vnis[100].ctrl.Epoch()
+	if epochA <= epochB {
+		t.Fatal("A should be ahead of B after rekey")
+	}
+
+	// Update A's view of B's epoch (still at old epoch).
+	cA.vnis[100].peerEpoch[cB.id] = epochB
+
+	// A's sendEpoch = min(epochA, epochB) = epochB (sender-lag).
+	sendE := cA.sendEpoch(100)
+	if sendE != epochB {
+		t.Fatalf("sendEpoch: want %d (B's epoch), got %d", epochB, sendE)
+	}
+
+	// A's saCache must contain epoch epochB (the send epoch).
+	if _, ok := cA.vnis[100].saCache[epochB]; !ok {
+		t.Fatalf("A's saCache missing send epoch %d (W=%d, cur=%d)", epochB, cA.W, epochA)
+	}
+
+	// Simulate A sending a data packet at sendEpoch.
+	// sendData picks saCache[sendEpoch] and emits MsgData with that SPI.
+	cA.sendData(100)
+	drainAll(s, []*Client{cA, cB}, []*DS{ds0, ds1}, m)
+
+	// Verify no packet-loss events recorded (inv. 5 held).
+	if len(checker.lossEvents) > 0 {
+		t.Fatalf("packet loss events recorded with W=%d, lag=1: %+v",
+			cA.W, checker.lossEvents)
+	}
+
+	// DataDecryptable counter must have increased.
+	if m.DataDecryptable == 0 {
+		t.Fatal("no DataDecryptable events recorded")
+	}
+}

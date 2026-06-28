@@ -411,15 +411,37 @@ func (c *Client) recoverViaLatestGI(vni uint32) {
 	c.broadcastCommit(vni, st.ctrl.Epoch()-1, true, recMsg)
 }
 
-// ─── stubs: replaced in Task 8 ────────────────────────────────────────────────
+// ─── Task 8: data-plane SA cache + sender-lag ────────────────────────────────
 
-// cacheCurrentSA is fully implemented in Task 8.
-func (c *Client) cacheCurrentSA(_ uint32) {}
+// cacheCurrentSA derives and stores the current-epoch SA (derive-time cache;
+// past epochs cannot be re-derived — forward secrecy, design spec §3.7).
+func (c *Client) cacheCurrentSA(vni uint32) {
+	st := c.vnis[vni]
+	if st == nil || !st.joined {
+		return
+	}
+	sa, err := st.ctrl.CurrentSA()
+	if err != nil {
+		return
+	}
+	st.saCache[sa.Epoch] = sa
+	c.trimSAs(vni)
+	c.metrics.observeOverlap(len(st.saCache))
+}
 
-// trimSAs is fully implemented in Task 8.
-func (c *Client) trimSAs(_ uint32) {}
+// trimSAs enforces the overlap window: keep only [cur-W .. cur]. W=0 (negative
+// control) keeps only the current epoch.
+func (c *Client) trimSAs(vni uint32) {
+	st := c.vnis[vni]
+	cur := st.ctrl.Epoch()
+	w := uint64(c.effectiveW())
+	for _, e := range sortedEpochs(st.saCache) {
+		if cur >= w && e < cur-w {
+			delete(st.saCache, e)
+		}
+	}
+}
 
-// effectiveW is fully implemented in Task 8.
 func (c *Client) effectiveW() int {
 	if c.mbbDisabled {
 		return 0
@@ -427,22 +449,70 @@ func (c *Client) effectiveW() int {
 	return c.W
 }
 
-// sendEpoch is fully implemented in Task 8.
+// sendEpoch is the sender-lag policy: send under the latest GROUP-WIDE-converged
+// epoch = min over self + all heartbeat peers (design spec §3.7). With
+// mbbDisabled it sends under the client's own current epoch (negative control).
 func (c *Client) sendEpoch(vni uint32) uint64 {
 	st := c.vnis[vni]
-	if st == nil {
-		return 0
+	cur := st.ctrl.Epoch()
+	if c.mbbDisabled {
+		return cur
 	}
-	return st.ctrl.Epoch()
+	mn := cur
+	for _, a := range sortedActorEpochs(st.peerEpoch) {
+		if st.peerEpoch[a] < mn {
+			mn = st.peerEpoch[a]
+		}
+	}
+	return mn
 }
 
-// sendData is fully implemented in Task 8.
-func (c *Client) sendData(_ uint32) {}
+// sendData generates a tenant packet tagged with the send-SA (TimerData).
+func (c *Client) sendData(vni uint32) {
+	st := c.vnis[vni]
+	if st == nil || !st.joined {
+		return
+	}
+	se := c.sendEpoch(vni)
+	sa, ok := st.saCache[se]
+	if !ok {
+		// fall back to current if min was trimmed
+		sa, ok = st.saCache[st.ctrl.Epoch()]
+		se = st.ctrl.Epoch()
+	}
+	if !ok {
+		return
+	}
+	c.metrics.observeSendLag(st.ctrl.Epoch() - se)
+	c.bus.Publish(Envelope{
+		VNI:  vni,
+		Type: MsgData,
+		Src:  c.id,
+		Dst:  Broadcast,
+		Base: se,
+		SPI:  sa.SPI,
+	})
+	c.metrics.DataSent++
+}
 
-// onData is fully implemented in Task 8.
-func (c *Client) onData(_ Envelope) {}
+// onData is the inv. 5 check point: a delivered (non-dropped) packet MUST be
+// decryptable by this receiver (design spec §3.5 inv. 5 / §3.7).
+func (c *Client) onData(env Envelope) {
+	st := c.vnis[env.VNI]
+	if st == nil || !st.joined {
+		return // not a live member of this VNI ⇒ packet is not "for" us
+	}
+	for _, e := range sortedEpochs(st.saCache) {
+		if st.saCache[e].SPI == env.SPI {
+			c.metrics.DataDecryptable++
+			return
+		}
+	}
+	// Undecryptable, non-dropped ⇒ PACKET-LOSS FAIL (design spec inv. 5).
+	c.checker.packetLoss(uint64(env.VNI), env.Base, st.ctrl.Epoch(), c.sched.Now())
+}
 
-// emitHeartbeat is fully implemented in Task 8.
+// emitHeartbeat advertises our current epoch on each VNI (TimerHeartbeat).
 func (c *Client) emitHeartbeat(vni uint32) {
 	st := c.vnis[vni]
 	if st == nil || !st.joined {

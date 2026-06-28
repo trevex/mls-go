@@ -191,10 +191,11 @@ overall=0
 
 # run_pass LABEL EXTRA_RUNNER_FLAGS...
 # Runs every config against both clients for the given handshake-framing mode.
-# Pass `-public=true` for PublicMessage handshakes, `-public=false` for encrypted
-# (PrivateMessage) member handshakes — the runner sets encrypt_handshake on
-# createGroup/joinGroup accordingly. (External-commit joins stay PublicMessage
-# per RFC 9420 regardless; the runner handles that.)
+# The mlswg runner selects the mode via two mutually-exclusive flags: `-public`
+# restricts to PublicMessage handshakes, `-private` restricts to PrivateMessage
+# (encrypted) handshakes (it sets encrypt_handshake on createGroup/joinGroup).
+# Passing neither would run BOTH variants. External-commit joins stay
+# PublicMessage per RFC 9420 regardless; the runner handles that.
 run_pass() {
   local label="$1"; shift
   local cfg name
@@ -217,10 +218,10 @@ run_pass() {
 }
 
 # Pass 1: PublicMessage handshakes (the original gate).
-run_pass public -public=true
+run_pass public -public
 # Pass 2: encrypted member handshakes (PrivateMessage) — exercises our
 # encrypt_handshake support end-to-end against OpenMLS on suite 1.
-run_pass encrypted -public=false
+run_pass encrypted -private
 
 # --- 8. summary --------------------------------------------------------------
 echo ""

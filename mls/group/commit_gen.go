@@ -14,8 +14,8 @@ type CommitOptions struct {
 	// ByValue holds proposals inlined into the Commit (e.g. Adds the committer
 	// originates).
 	ByValue []Proposal
-	// ByReference holds previously-delivered PublicMessage proposal MLSMessage
-	// bytes to include by reference (ProposalRef).
+	// ByReference holds previously-delivered PublicMessage or PrivateMessage
+	// proposal MLSMessage bytes to include by reference (ProposalRef).
 	ByReference [][]byte
 }
 
@@ -40,43 +40,17 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	}
 
 	// Build proposal cache from the by-reference proposals (same logic as
-	// ProcessCommit — UnmarshalMLS → UnprotectPublic → RefHash).
+	// ProcessCommit — authenticate → RefHash, dispatching on wire format).
 	// Also build Commit.Proposals by-reference entries in the same pass so we
 	// never re-parse or swallow errors in a second loop.
 	var cm Commit
 	cache := make(map[string]cachedProposal, len(opt.ByReference))
 	for idx, propBytes := range opt.ByReference {
-		var m framing.MLSMessage
-		if err := m.UnmarshalMLS(propBytes); err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] parse: %w", idx, err)
-		}
-		if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] not a PublicMessage", idx)
-		}
-		senderLeaf := m.Public.Content.Sender.LeafIndex
-		senderLeafNode, err := g.tree.LeafNodeAt(senderLeaf)
+		ref, prop, senderLeaf, err := g.authenticateProposalMessage(propBytes)
 		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] sender leaf %d: %w", idx, senderLeaf, err)
-		}
-		gc := g.groupContext
-		ac, err := framing.UnprotectPublic(g.suite, senderLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] authenticate: %w", idx, err)
-		}
-		acBytes, err := ac.MarshalMLS()
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] marshal AC: %w", idx, err)
-		}
-		ref, err := g.suite.RefHash("MLS 1.0 Proposal Reference", acBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] RefHash: %w", idx, err)
-		}
-		var prop Proposal
-		if err := prop.UnmarshalMLS(ac.Content.Content); err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] parse body: %w", idx, err)
+			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d]: %w", idx, err)
 		}
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
-		// Reuse the already-computed ref — no second parse needed.
 		cm.Proposals = append(cm.Proposals, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 	}
 	// Append by-value proposals after by-reference ones. The added members'

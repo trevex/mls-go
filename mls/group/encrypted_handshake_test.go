@@ -284,13 +284,70 @@ func TestEncryptedCommitTamperRejected(t *testing.T) {
 // TestEncryptedByReferenceProposal verifies that when encryptHandshakes is true
 // FrameProposal produces a PrivateMessage, and that Commit and ProcessCommit
 // both handle by-reference private proposals correctly. After processing both
-// members must share the same epoch_authenticator.
+// members must share the same epoch_authenticator. Runs over suites 0x0001,
+// 0x0002, and 0xF001.
 func TestEncryptedByReferenceProposal(t *testing.T) {
+	suites := []cipher.CipherSuite{
+		cipher.X25519_AES128GCM_SHA256_Ed25519,
+		cipher.P256_AES128GCM_SHA256_P256,
+		cipher.XWING_AES256GCM_SHA256_Ed25519,
+	}
+	for _, id := range suites {
+		id := id
+		t.Run(fmt.Sprintf("suite-%#x", id), func(t *testing.T) {
+			committer, member := twoMemberGroupSuite(t, id)
+			committer.SetEncryptHandshakes(true)
+			member.SetEncryptHandshakes(true)
+
+			// Member (leaf 1) proposes an update.
+			upd, err := member.ProposeUpdate()
+			if err != nil {
+				t.Fatalf("ProposeUpdate: %v", err)
+			}
+			propMsg, err := member.FrameProposal(upd)
+			if err != nil {
+				t.Fatalf("FrameProposal: %v", err)
+			}
+
+			// Assert propMsg is a PrivateMessage.
+			var m framing.MLSMessage
+			if err := m.UnmarshalMLS(propMsg); err != nil {
+				t.Fatalf("UnmarshalMLS(propMsg): %v", err)
+			}
+			if m.WireFormat != framing.WireFormatPrivateMessage {
+				t.Errorf("propMsg WireFormat = %v, want WireFormatPrivateMessage", m.WireFormat)
+			}
+
+			// Committer commits the by-reference private proposal.
+			commit, _, err := committer.Commit(group.CommitOptions{ByReference: [][]byte{propMsg}})
+			if err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+
+			// Member processes the commit.
+			if err := member.ProcessCommit([][]byte{propMsg}, commit); err != nil {
+				t.Fatalf("ProcessCommit: %v", err)
+			}
+
+			// Both must converge on the same epoch_authenticator.
+			if !bytes.Equal(member.EpochAuthenticator(), committer.EpochAuthenticator()) {
+				t.Fatalf("epoch_authenticator mismatch\n  member    %x\n  committer %x",
+					member.EpochAuthenticator(), committer.EpochAuthenticator())
+			}
+			t.Logf("suite %#x: encrypted by-reference proposal round-trip OK, EA=%x", id, committer.EpochAuthenticator())
+		})
+	}
+}
+
+// TestEncryptedByReferenceProposalTamperRejected verifies that a tampered
+// private by-reference proposal is rejected by Commit. A bit-flip in the last
+// byte of the proposal ciphertext must produce a non-nil error.
+func TestEncryptedByReferenceProposalTamperRejected(t *testing.T) {
 	committer, member := twoMemberGroup(t)
 	committer.SetEncryptHandshakes(true)
 	member.SetEncryptHandshakes(true)
 
-	// Member (leaf 1) proposes an update.
+	// Member (leaf 1) frames a private Update proposal.
 	upd, err := member.ProposeUpdate()
 	if err != nil {
 		t.Fatalf("ProposeUpdate: %v", err)
@@ -300,32 +357,14 @@ func TestEncryptedByReferenceProposal(t *testing.T) {
 		t.Fatalf("FrameProposal: %v", err)
 	}
 
-	// Assert propMsg is a PrivateMessage.
-	var m framing.MLSMessage
-	if err := m.UnmarshalMLS(propMsg); err != nil {
-		t.Fatalf("UnmarshalMLS(propMsg): %v", err)
+	// Flip the last byte of a copy to simulate tampering.
+	tampered := append([]byte(nil), propMsg...)
+	tampered[len(tampered)-1] ^= 0xFF
+	if _, _, err := committer.Commit(group.CommitOptions{ByReference: [][]byte{tampered}}); err == nil {
+		t.Fatal("Commit accepted a tampered private by-reference proposal, want error")
+	} else {
+		t.Logf("tampered private by-reference proposal correctly rejected: %v", err)
 	}
-	if m.WireFormat != framing.WireFormatPrivateMessage {
-		t.Errorf("propMsg WireFormat = %v, want WireFormatPrivateMessage", m.WireFormat)
-	}
-
-	// Committer commits the by-reference private proposal.
-	commit, _, err := committer.Commit(group.CommitOptions{ByReference: [][]byte{propMsg}})
-	if err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-
-	// Member processes the commit.
-	if err := member.ProcessCommit([][]byte{propMsg}, commit); err != nil {
-		t.Fatalf("ProcessCommit: %v", err)
-	}
-
-	// Both must converge on the same epoch_authenticator.
-	if !bytes.Equal(member.EpochAuthenticator(), committer.EpochAuthenticator()) {
-		t.Fatalf("epoch_authenticator mismatch\n  member    %x\n  committer %x",
-			member.EpochAuthenticator(), committer.EpochAuthenticator())
-	}
-	t.Logf("encrypted by-reference proposal round-trip OK, EA=%x", committer.EpochAuthenticator())
 }
 
 // TestMixedPublicPrivateSequence exercises a mixed sequence of public and

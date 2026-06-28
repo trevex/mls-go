@@ -233,7 +233,7 @@ func (g *Group) authenticateProposalMessage(propBytes []byte) (ref []byte, prop 
 		leaf := m.Public.Content.Sender.LeafIndex
 		ln, lerr := g.tree.LeafNodeAt(leaf)
 		if lerr != nil {
-			return nil, Proposal{}, 0, lerr
+			return nil, Proposal{}, 0, fmt.Errorf("leaf %d: %w", leaf, lerr)
 		}
 		ac, err = framing.UnprotectPublic(g.suite, ln.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
 	case m.WireFormat == framing.WireFormatPrivateMessage && m.Private != nil:

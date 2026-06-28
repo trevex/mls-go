@@ -35,7 +35,6 @@ func TestEnvelopeKindString(t *testing.T) {
 	}{
 		{MsgCommit, "commit"},
 		{MsgWelcome, "welcome"},
-		{MsgGroupInfo, "groupInfo"},
 		{MsgHeartbeat, "heartbeat"},
 		{MsgLogRequest, "logRequest"},
 		{MsgLogReply, "logReply"},

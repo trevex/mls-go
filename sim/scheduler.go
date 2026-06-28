@@ -49,9 +49,6 @@ func (s *Scheduler) Pop() (Event, bool) {
 	return e, true
 }
 
-// Empty reports whether the queue is quiescent.
-func (s *Scheduler) Empty() bool { return s.pq.Len() == 0 }
-
 // eventHeap orders by (At, Seq).
 type eventHeap []Event
 

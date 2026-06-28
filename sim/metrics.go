@@ -19,9 +19,6 @@ type Metrics struct {
 	CatchupRequests int
 	LogRetransmits  int
 	CommitRejected  int // commits dropped by a reflector's local register (dedup / loser)
-	Recoveries      int
-	LostRekeys      int
-	Forks           int
 	CommitResends   int // committer resends of an unconfirmed head commit (drop recovery)
 	DataSent        int
 	DataDecryptable int
@@ -43,8 +40,7 @@ func (m *Metrics) cpu(op string, d time.Duration) {
 	m.cpuCount[op]++
 }
 
-func (m *Metrics) commitFanout(vni uint32, size, nDS int) {
-	_ = vni
+func (m *Metrics) commitFanout(size, nDS int) {
 	m.CommitMsgs += nDS // each replica peers a single reflector (nDS=1 per call)
 	m.CommitBytes += size * nDS
 }
@@ -72,9 +68,6 @@ func (m *Metrics) Report() string {
 	_, _ = fmt.Fprintf(w, "data-sent\t%d\n", m.DataSent)
 	_, _ = fmt.Fprintf(w, "data-decryptable\t%d\n", m.DataDecryptable)
 	_, _ = fmt.Fprintf(w, "data-dropped(transport)\t%d\n", m.DataDropped)
-	_, _ = fmt.Fprintf(w, "forks\t%d\n", m.Forks)
-	_, _ = fmt.Fprintf(w, "recoveries\t%d\n", m.Recoveries)
-	_, _ = fmt.Fprintf(w, "lost-rekeys\t%d\n", m.LostRekeys)
 	_, _ = fmt.Fprintf(w, "catchup-requests\t%d\n", m.CatchupRequests)
 	_, _ = fmt.Fprintf(w, "log-retransmits\t%d\n", m.LogRetransmits)
 	_, _ = fmt.Fprintf(w, "commit-msgs(fanout)\t%d\n", m.CommitMsgs)

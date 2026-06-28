@@ -30,17 +30,17 @@ func TestDeterminism(t *testing.T) {
 	// (cpuNanos) is measured and intentionally varies across runs.
 	m1, m2 := r1.Metrics, r2.Metrics
 	type deterministicMetrics struct {
-		Delivered, Reflected, CtrlDropped, DataDropped, Blocked   int
-		CatchupRequests, LogRetransmits, Recoveries, LostRekeys   int
-		Forks, DataSent, DataDecryptable, CommitMsgs, CommitBytes int
-		MaxOverlap                                                int
-		MaxSendLag                                                uint64
+		Delivered, Reflected, CtrlDropped, DataDropped, Blocked  int
+		CatchupRequests, LogRetransmits                          int
+		DataSent, DataDecryptable, CommitMsgs, CommitBytes       int
+		MaxOverlap                                               int
+		MaxSendLag                                               uint64
 	}
 	snap := func(m *Metrics) deterministicMetrics {
 		return deterministicMetrics{
 			m.Delivered, m.Reflected, m.CtrlDropped, m.DataDropped, m.Blocked,
-			m.CatchupRequests, m.LogRetransmits, m.Recoveries, m.LostRekeys,
-			m.Forks, m.DataSent, m.DataDecryptable, m.CommitMsgs, m.CommitBytes,
+			m.CatchupRequests, m.LogRetransmits,
+			m.DataSent, m.DataDecryptable, m.CommitMsgs, m.CommitBytes,
 			m.MaxOverlap, m.MaxSendLag,
 		}
 	}

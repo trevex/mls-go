@@ -346,13 +346,6 @@ func (w *world) dispatchTimer(e Event) string {
 			w.s.Schedule(e.At+w.dataInterval, Event{Kind: KindTimer, Actor: e.Actor,
 				Timer: TimerData, Env: e.Env})
 		}
-	case TimerDSRestart:
-		for _, ds := range w.dss {
-			if ds.id == e.Actor {
-				ds.restart()
-				break
-			}
-		}
 	}
 	return fmt.Sprintf("%d|timer|a=%d|vni=%d|t=%d", e.At, e.Actor, vni, e.Timer)
 }
@@ -462,9 +455,8 @@ func Run(sc Scenario, seed int64) Result {
 	}
 
 	// There are no forks in the dual single-sequencer model (each replica is a true
-	// total order), so fork count is identically zero.
+	// total order); the invariant checker confirms this via Result.Fork staying nil.
 	r := checker.Evaluate(clients, w.intended)
-	metrics.Forks = 0
 	r.Metrics = metrics
 	r.Trace = trace
 	return r

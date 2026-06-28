@@ -1,0 +1,17 @@
+# golangci-lint configuration (v2 schema).
+#
+# Intentionally minimal: it enables the standard correctness/hygiene linters
+# that the codebase already satisfies, and deliberately omits opinionated style
+# linters (gomnd, wsl, nlreturn, exhaustruct, lll, varnamelen, ...) that would
+# demand churn without improving correctness.
+#
+# Run with: golangci-lint run ./...   (see `make lint`)
+version: "2"
+
+linters:
+  # Start from the default set (errcheck, govet, ineffassign, staticcheck,
+  # unused) and add a couple of low-noise extras. In v2 the former gosimple
+  # and stylecheck S-/U-checks are folded into staticcheck.
+  default: standard
+  enable:
+    - unconvert # flag redundant type conversions

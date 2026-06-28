@@ -41,17 +41,32 @@ var (
 // ok=false ⇒ no KeyPackage available yet; the identity is reported Pending.
 type KeyPackageResolver func(identity []byte) (kpMsg []byte, ok bool)
 
+// HandshakePrivacy selects how a VNI frames its members' outbound handshakes.
+// The zero value is HandshakeEncrypted — the default — so a reflector relaying a
+// member commit/proposal sees only ciphertext. External-commit recovery is
+// always PublicMessage regardless (RFC 9420 §12.4.3).
+type HandshakePrivacy int
+
+const (
+	HandshakeEncrypted HandshakePrivacy = iota // default: member handshakes are PrivateMessage
+	HandshakePlaintext                         // member handshakes are PublicMessage
+)
+
 // ControllerConfig configures one VNI's membership controller.
 type ControllerConfig struct {
-	VNI       uint32
-	Suite     cipher.Suite
-	Ordering  group.Ordering            // the single linearization point
-	Clock     group.Clock               // injectable; the controller never reads wall-clock
+	VNI      uint32
+	Suite    cipher.Suite
+	Ordering group.Ordering            // the single linearization point
+	Clock    group.Clock               // injectable; the controller never reads wall-clock
 	Validator group.CredentialValidator // AS: maps a leaf credential → verified identity
-	Cred      tree.Credential           // this node's own credential
-	Signer    crypto.Signer             // this node's own signing key
-	Lifetime  tree.Lifetime             // KeyPackage lifetime for our external-commit/join leaves
-	Resolve   KeyPackageResolver        // resolves desired identities → published KeyPackages
+	Cred     tree.Credential           // this node's own credential
+	Signer   crypto.Signer             // this node's own signing key
+	Lifetime tree.Lifetime             // KeyPackage lifetime for our external-commit/join leaves
+	Resolve  KeyPackageResolver        // resolves desired identities → published KeyPackages
+
+	// HandshakePrivacy selects PrivateMessage (default) vs PublicMessage framing
+	// for this VNI's member handshakes. Zero value = HandshakeEncrypted.
+	HandshakePrivacy HandshakePrivacy
 }
 
 // ReconcileResult reports what one Reconcile did.
@@ -92,6 +107,7 @@ func NewController(cfg ControllerConfig, g *group.Group) (*Controller, error) {
 		ordering: cfg.Ordering,
 	}
 	if g != nil {
+		c.applyHandshakePrivacy()
 		if err := c.deriveCur(); err != nil {
 			return nil, fmt.Errorf("ironcore: NewController: deriveCur: %w", err)
 		}
@@ -154,6 +170,7 @@ func (c *Controller) JoinViaWelcome(welcomeMsg, kpMsg, initPriv, leafPriv []byte
 		return fmt.Errorf("ironcore: JoinViaWelcome: %w", err)
 	}
 	c.g = g
+	c.applyHandshakePrivacy()
 	if err := c.deriveCur(); err != nil {
 		return fmt.Errorf("ironcore: JoinViaWelcome: deriveCur: %w", err)
 	}
@@ -180,6 +197,7 @@ func (c *Controller) JoinViaExternalCommit(ctx context.Context, gi *group.GroupI
 		return nil, ErrJoinSuperseded
 	}
 	c.g = newGroup
+	c.applyHandshakePrivacy()
 	if err := c.deriveCur(); err != nil {
 		return nil, fmt.Errorf("ironcore: JoinViaExternalCommit: deriveCur: %w", err)
 	}
@@ -366,6 +384,7 @@ func (c *Controller) AutoRecover(ctx context.Context, candidates []group.CommitR
 		return nil, err
 	}
 	c.g = vg.g // adopt the recovered group
+	c.applyHandshakePrivacy()
 	if rerr := c.rotateSA(); rerr != nil {
 		return commitMsg, fmt.Errorf("ironcore: AutoRecover: rotateSA: %w", rerr)
 	}
@@ -373,6 +392,15 @@ func (c *Controller) AutoRecover(ctx context.Context, candidates []group.CommitR
 }
 
 // ─── unexported helpers ───────────────────────────────────────────────────────
+
+// applyHandshakePrivacy sets the adopted group's outbound-handshake framing from
+// config. External-commit/recovery messages are always PublicMessage regardless
+// (RFC 9420 §12.4.3); this only governs the member's own future commits/proposals.
+func (c *Controller) applyHandshakePrivacy() {
+	if c.g != nil {
+		c.g.SetEncryptHandshakes(c.cfg.HandshakePrivacy != HandshakePlaintext)
+	}
+}
 
 // deriveCur derives the current SA from g and stores it in c.curSA.
 func (c *Controller) deriveCur() error {

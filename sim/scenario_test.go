@@ -67,6 +67,22 @@ func TestScenarioBothRekey(t *testing.T) {
 	}
 }
 
+// TestScenarioEncryptedChurn: all dual-redundancy invariants must hold AND every
+// member handshake must arrive at the reflector as PrivateMessage (zero plaintext
+// exposures) across the full 20-seed sweep.
+func TestScenarioEncryptedChurn(t *testing.T) {
+	for seed := int64(1); seed <= 20; seed++ {
+		r := Run(EncryptedChurn(), seed)
+		if !r.InvariantsHeld {
+			t.Fatalf("seed %d: %s", seed, failureSummary(r))
+		}
+		if r.Metrics.PlaintextHandshakeExposures != 0 {
+			t.Fatalf("seed %d: reflector observed %d plaintext member handshakes, want 0",
+				seed, r.Metrics.PlaintextHandshakeExposures)
+		}
+	}
+}
+
 // TestNegativeControl_PacketLoss: ONE replica + W=0 + no sender-lag MUST produce
 // undecryptable data packets (inv. 2 fails). Proves the zero-loss checker has teeth.
 func TestNegativeControl_PacketLoss(t *testing.T) {

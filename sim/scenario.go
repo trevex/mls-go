@@ -21,8 +21,10 @@ type Scenario struct {
 	MBBDisabled   bool // negative control: W=0 + no sender-lag
 	SingleReplica bool // negative control: model only ONE replica (no redundancy)
 	// EncryptHandshakes makes every VNI in this scenario frame member handshakes
-	// as PrivateMessage (maps to ironcore HandshakePrivacy). Default false so the
-	// other scenarios keep their existing PublicMessage behavior.
+	// as PrivateMessage (maps to ironcore HandshakePrivacy). Default false: the
+	// other scenarios opt out to HandshakePlaintext explicitly (see client.go) —
+	// a deliberate opt-out of ironcore's HandshakeEncrypted zero-value default —
+	// so the plaintext-exposure invariant applies only to EncryptedChurn.
 	EncryptHandshakes bool
 }
 

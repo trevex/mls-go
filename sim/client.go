@@ -130,6 +130,11 @@ func (c *Client) prospectiveVNI(ch uint32) {
 }
 
 func (c *Client) controllerCfg(ch uint32) ironcore.ControllerConfig {
+	// ironcore's zero-value HandshakePrivacy is HandshakeEncrypted, so we opt out
+	// EXPLICITLY here for non-encrypted scenarios. This keeps the existing
+	// scenarios on PublicMessage commits and isolates the plaintext-exposure
+	// invariant to EncryptedChurn. Do NOT drop the HandshakePrivacy field below —
+	// removing it would silently encrypt all scenario traffic with no test failure.
 	hp := ironcore.HandshakePlaintext
 	if c.encryptHandshakes {
 		hp = ironcore.HandshakeEncrypted

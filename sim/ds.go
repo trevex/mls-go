@@ -6,7 +6,7 @@ import (
 
 	"github.com/trevex/mls-go/ironcore"
 	"github.com/trevex/mls-go/ironcore/sequencer"
-	framing "github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/group"
 )
 
@@ -65,6 +65,7 @@ func (d *DS) observeHandshakePrivacy(env Envelope, m *Metrics) {
 		return // unparseable bytes are not a plaintext exposure
 	}
 	// new_member_commit (external join/recovery) is PublicMessage by RFC — ignore.
+	// Counted per delivery, not per unique commit; resends may increment more than once (harmless for the >0 invariant).
 	if msg.WireFormat == framing.WireFormatPublicMessage && msg.Public != nil &&
 		msg.Public.Content.Sender.Type != framing.SenderTypeNewMemberCommit {
 		m.PlaintextHandshakeExposures++

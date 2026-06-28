@@ -1,6 +1,11 @@
 package sim
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/tree"
+)
 
 // buildDSHarness creates a minimal harness with two reflectors (R0=replica 0,
 // R1=replica 1), each with its own accept-once register.
@@ -100,5 +105,109 @@ func TestDSDownStopsFanout(t *testing.T) {
 		Base: 0, Payload: commit, Hash: contentHash(commit)}, m)
 	if m.Reflected != 1 {
 		t.Fatalf("restarted DS should reflect, got %d", m.Reflected)
+	}
+}
+
+// TestObserveHandshakePrivacyDetectsPlaintext directly exercises observeHandshakePrivacy
+// without running a full simulation.
+func TestObserveHandshakePrivacyDetectsPlaintext(t *testing.T) {
+	d := &DS{encryptHandshakes: true}
+	m := newMetrics()
+
+	// Minimal commit content: empty proposals<V> (one zero varint) + absent UpdatePath (0x00).
+	commitContent := []byte{0x00, 0x00}
+
+	// buildPublic marshals a PublicMessage MLSMessage with the given sender type and
+	// verifies it round-trips through UnmarshalMLS before returning the wire bytes.
+	buildPublic := func(senderType framing.SenderType) []byte {
+		t.Helper()
+		sender := framing.Sender{Type: senderType}
+		if senderType == framing.SenderTypeMember {
+			sender.LeafIndex = 0
+		}
+		pub := &framing.PublicMessage{
+			Content: framing.FramedContent{
+				GroupID:     []byte{0x01},
+				Epoch:       0,
+				Sender:      sender,
+				ContentType: framing.ContentTypeCommit,
+				Content:     commitContent,
+			},
+			Auth: framing.FramedContentAuthData{
+				Signature:       nil, // zero-length OpaqueV; observer only checks wire format + sender type
+				ConfirmationTag: nil, // required field for commit; zero-length is valid wire
+			},
+		}
+		if senderType == framing.SenderTypeMember {
+			pub.MembershipTag = nil // required field for member sender; zero-length is valid wire
+		}
+		msg := framing.MLSMessage{
+			Version:    tree.ProtocolVersionMLS10,
+			WireFormat: framing.WireFormatPublicMessage,
+			Public:     pub,
+		}
+		b, err := msg.MarshalMLS()
+		if err != nil {
+			t.Fatalf("buildPublic(%v) MarshalMLS: %v", senderType, err)
+		}
+		// Verify the bytes round-trip so the test setup is self-consistent.
+		var got framing.MLSMessage
+		if err := got.UnmarshalMLS(b); err != nil {
+			t.Fatalf("buildPublic(%v) UnmarshalMLS: %v", senderType, err)
+		}
+		if got.WireFormat != framing.WireFormatPublicMessage || got.Public == nil {
+			t.Fatalf("buildPublic(%v) round-trip: WireFormat=%v Public=%v", senderType, got.WireFormat, got.Public)
+		}
+		if got.Public.Content.Sender.Type != senderType {
+			t.Fatalf("buildPublic(%v) round-trip: sender type = %v", senderType, got.Public.Content.Sender.Type)
+		}
+		return b
+	}
+
+	// Case 1: SenderTypeMember commit as PublicMessage in an encrypted VNI
+	// → counter must increment (plaintext exposure detected).
+	env1 := Envelope{Type: MsgCommit, Payload: buildPublic(framing.SenderTypeMember)}
+	d.observeHandshakePrivacy(env1, m)
+	if m.PlaintextHandshakeExposures != 1 {
+		t.Fatalf("case 1: PlaintextHandshakeExposures = %d, want 1", m.PlaintextHandshakeExposures)
+	}
+
+	// Case 2: SenderTypeNewMemberCommit (external-join / recovery carve-out) is
+	// always PublicMessage by RFC 9420 — the observer must NOT count it.
+	env2 := Envelope{Type: MsgCommit, Payload: buildPublic(framing.SenderTypeNewMemberCommit)}
+	before2 := m.PlaintextHandshakeExposures
+	d.observeHandshakePrivacy(env2, m)
+	if m.PlaintextHandshakeExposures != before2 {
+		t.Fatalf("case 2: NewMemberCommit incremented counter: got %d, want %d",
+			m.PlaintextHandshakeExposures, before2)
+	}
+
+	// Case 3: PrivateMessage commit → observer must not increment (handshake is encrypted).
+	privMsg := framing.MLSMessage{
+		Version:    tree.ProtocolVersionMLS10,
+		WireFormat: framing.WireFormatPrivateMessage,
+		Private: &framing.PrivateMessage{
+			GroupID:             []byte{0x01},
+			Epoch:               0,
+			ContentType:         framing.ContentTypeCommit,
+			AuthenticatedData:   nil,
+			EncryptedSenderData: []byte{0x00},
+			Ciphertext:          []byte{0x00},
+		},
+	}
+	privBytes, err := privMsg.MarshalMLS()
+	if err != nil {
+		t.Fatalf("case 3 MarshalMLS: %v", err)
+	}
+	var gotPriv framing.MLSMessage
+	if err := gotPriv.UnmarshalMLS(privBytes); err != nil {
+		t.Fatalf("case 3 UnmarshalMLS: %v", err)
+	}
+	env3 := Envelope{Type: MsgCommit, Payload: privBytes}
+	before3 := m.PlaintextHandshakeExposures
+	d.observeHandshakePrivacy(env3, m)
+	if m.PlaintextHandshakeExposures != before3 {
+		t.Fatalf("case 3: PrivateMessage incremented counter: got %d, want %d",
+			m.PlaintextHandshakeExposures, before3)
 	}
 }

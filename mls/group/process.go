@@ -2,6 +2,7 @@ package group
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/trevex/mls-go/mls/cipher"
@@ -215,6 +216,34 @@ func (g *Group) resolveOwnUpdatePriv(cm Commit, cache map[string]cachedProposal,
 	return nil, nil
 }
 
+// authenticateCommit recovers the AuthenticatedContent of an inbound member
+// commit, dispatching on its wire format. PrivateMessage commits are decrypted
+// with the current epoch's secret tree; the recovered sender MUST be a member
+// (external/new_member commits are PublicMessage by RFC 9420 — fail closed).
+func (g *Group) authenticateCommit(m framing.MLSMessage) (framing.AuthenticatedContent, error) {
+	gc := g.groupContext
+	switch {
+	case m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil:
+		leaf := m.Public.Content.Sender.LeafIndex
+		ln, err := g.tree.LeafNodeAt(leaf)
+		if err != nil {
+			return framing.AuthenticatedContent{}, fmt.Errorf("committer leaf %d: %w", leaf, err)
+		}
+		return framing.UnprotectPublic(g.suite, ln.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
+	case m.WireFormat == framing.WireFormatPrivateMessage && m.Private != nil:
+		ac, err := framing.UnprotectPrivate(g.suite, g.sigPubByLeaf, &gc, g.secretTree, g.epoch.SenderDataSecret, *m.Private)
+		if err != nil {
+			return framing.AuthenticatedContent{}, err
+		}
+		if ac.Content.Sender.Type != framing.SenderTypeMember {
+			return framing.AuthenticatedContent{}, errors.New("framing: external sender in PrivateMessage commit")
+		}
+		return ac, nil
+	default:
+		return framing.AuthenticatedContent{}, errors.New("group: ProcessCommit: unsupported commit wire format")
+	}
+}
+
 // ProcessCommit advances the group by one epoch, given the proposals delivered
 // before the commit (cached by reference) and the commit MLSMessage. It verifies
 // the commit's authentication and confirmation_tag and returns an error (leaving
@@ -269,28 +298,18 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
 	}
 
-	// step 2: Authenticate the commit (PublicMessage, member sender).
+	// step 2: Authenticate the commit, dispatching on wire format.
 	var m framing.MLSMessage
 	if err := m.UnmarshalMLS(commit); err != nil {
 		return fmt.Errorf("group: ProcessCommit: parse commit: %w", err)
 	}
-	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-		return fmt.Errorf("group: ProcessCommit: commit is not a PublicMessage")
-	}
 
-	// Dispatch: new_member_commit (external joiner) is handled separately because
-	// the committer is not in the tree and uses the joiner's UpdatePath key for auth.
-	if m.Public.Content.Sender.Type == framing.SenderTypeNewMemberCommit {
+	// External joins are always PublicMessage with a new_member_commit sender.
+	if m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil &&
+		m.Public.Content.Sender.Type == framing.SenderTypeNewMemberCommit {
 		return g.processExternalCommit(m)
 	}
-
-	committerLeaf := m.Public.Content.Sender.LeafIndex
-	committerLeafNode, err := g.tree.LeafNodeAt(committerLeaf)
-	if err != nil {
-		return fmt.Errorf("group: ProcessCommit: committer leaf %d: %w", committerLeaf, err)
-	}
-	gc := g.groupContext
-	ac, err := framing.UnprotectPublic(g.suite, committerLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
+	ac, err := g.authenticateCommit(m)
 	if err != nil {
 		return fmt.Errorf("group: ProcessCommit: authenticate commit: %w", err)
 	}
@@ -298,6 +317,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		return fmt.Errorf("group: ProcessCommit: commit epoch %d != group epoch %d",
 			ac.Content.Epoch, g.groupContext.Epoch)
 	}
+	committerLeaf := ac.Content.Sender.LeafIndex
 
 	// step 3: Parse the Commit body.
 	var cm Commit
@@ -490,8 +510,9 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	g.secretTree = st
 	// Seed the next epoch's resumption PSK into history immediately.
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
-	// Reset per-epoch sender ratchet counter (RFC 9420 §9.1).
+	// Reset per-epoch sender ratchet counters (RFC 9420 §9.1).
 	g.appGeneration = 0
+	g.handshakeGeneration = 0
 	// Clear pending updates on epoch change — any pending key from the old epoch
 	// is now either committed (and swapped into g.priv) or superseded.
 	g.pendingUpdates = map[string][]byte{}

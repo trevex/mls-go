@@ -68,8 +68,6 @@ func (g *Group) SetEncryptHandshakes(v bool) { g.encryptHandshakes = v }
 
 // sigPubByLeaf resolves a leaf index to its signature public key from the
 // ratchet tree (the verifier callback for UnprotectPrivate).
-//
-//nolint:unused // used by the receive path added in a later task
 func (g *Group) sigPubByLeaf(leaf uint32) ([]byte, error) {
 	ln, err := g.tree.LeafNodeAt(leaf)
 	if err != nil {

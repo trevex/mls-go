@@ -18,9 +18,11 @@ type Metrics struct {
 	Blocked         int
 	CatchupRequests int
 	LogRetransmits  int
+	CommitRejected  int // commits dropped by a reflector's local register (dedup / loser)
 	Recoveries      int
 	LostRekeys      int
 	Forks           int
+	CommitResends   int // committer resends of an unconfirmed head commit (drop recovery)
 	DataSent        int
 	DataDecryptable int
 	CommitMsgs      int

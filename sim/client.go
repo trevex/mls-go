@@ -3,67 +3,90 @@ package sim
 import (
 	"context"
 	"crypto"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
 	"github.com/trevex/mls-mlkem-go/mls/group"
 )
 
-// optimisticOrdering is the AP "no register" adapter (design spec §7 / N1).
+// numDS is the number of MetalBond reflectors = the number of independent
+// replicas per VNI (dual-group pure redundancy, rev 5 §0).
+const numDS = 2
+
+// saVNI maps a tenant VNI + replica index to the per-replica channel id used as
+// BOTH the MLS GroupID and the ironcore SA derivation VNI, so the two replicas of
+// a tenant get distinct group state, distinct SA keys AND distinct SPIs — no
+// collision (rev 5 §0).
+func saVNI(vni uint32, r int) uint32 { return vni*numDS + uint32(r) }
+
+func replicaOf(ch uint32) int   { return int(ch % numDS) }
+func tenantOf(ch uint32) uint32 { return ch / numDS }
+
+// optimisticOrdering is the client-side Ordering adapter: the client commits and
+// broadcasts optimistically; the authoritative accept-once decision is made by the
+// reflector R_r's OWN register (in ds.go). With a single designated committer per
+// replica there are never competing commits, so this is always consistent.
 type optimisticOrdering struct{}
 
 func (optimisticOrdering) AcceptCommit(_ context.Context, _ group.GroupID, _ uint64, _ group.CommitRef) (bool, error) {
 	return true, nil
 }
 
-// vniState is one client's per-VNI state.
+// vniState is one client's state for one replica channel (one MLS group).
 type vniState struct {
 	ctrl      *ironcore.Controller
 	joined    bool
-	joinEpoch uint64                 // epoch when this client joined this VNI
-	seen      map[string][][]byte    // vniKey(vni,base) -> competing commit refs
-	giByRef   map[string][]byte      // ref(hash) -> GroupInfo bytes (for recovery)
-	applied   map[uint64][]byte      // base -> the ref this client applied at base
-	recovered map[uint64]bool        // base -> already recovered
+	joinEpoch uint64
 	saCache   map[uint64]ironcore.SA // epoch -> SA (derive-time cache; never re-derive)
-	peerEpoch map[ActorID]uint64     // last heartbeat epoch per co-VNI member
-	// catchupReqs tracks how many requestCatchup calls we've made from each
-	// base epoch without making any log-replay progress. The external-commit
-	// fallback (recoverViaLatestGI) is only triggered after ≥ 2 failed rounds
-	// so that normal jitter in Nominal (log request races the commit to the DS)
-	// never creates spurious external commits.
+	peerEpoch map[ActorID]uint64     // last-known epoch per co-replica member
+	heard     map[ActorID]bool       // members we've received a heartbeat from (confirmed live on this replica)
+
+	// committer-side reliable delivery (drop recovery without any fork machinery):
+	// the single designated committer caches the head commit + any outstanding
+	// Welcomes and resends them until the reflector confirms (echoes) the commit
+	// and the joiner reports in. It does not issue a new commit until the head is
+	// confirmed and all Welcomes have landed, which keeps each replica a clean
+	// single-writer total order.
+	outbox         map[uint64][]byte // base -> commit bytes issued by this committer
+	confirmed      map[uint64]bool   // base -> reflector echoed it back (landed at R_r)
+	hasHead        bool
+	headBase       uint64
+	pendingWelcome map[string][]byte // joiner identity -> Welcome bytes not yet joined
+
 	catchupReqs map[uint64]int
 }
 
 func newVNIState() *vniState {
 	return &vniState{
-		seen:        map[string][][]byte{},
-		giByRef:     map[string][]byte{},
-		applied:     map[uint64][]byte{},
-		recovered:   map[uint64]bool{},
-		saCache:     map[uint64]ironcore.SA{},
-		peerEpoch:   map[ActorID]uint64{},
-		catchupReqs: map[uint64]int{},
+		saCache:        map[uint64]ironcore.SA{},
+		peerEpoch:      map[ActorID]uint64{},
+		heard:          map[ActorID]bool{},
+		outbox:         map[uint64][]byte{},
+		confirmed:      map[uint64]bool{},
+		pendingWelcome: map[string][]byte{},
+		catchupReqs:    map[uint64]int{},
 	}
 }
 
-// Client is one metalnet host actor (design spec §3.3).
+// Client is one metalnet host actor. It runs two ironcore.Controllers per tenant
+// VNI (one per replica channel saVNI(vni,r)); every host is a member of BOTH
+// replicas and installs BOTH replicas' SAs (rev 5 §0).
 type Client struct {
 	id          ActorID
 	suite       cipher.Suite
 	signer      crypto.Signer
 	identity    string
-	vnis        map[uint32]*vniState
+	vnis        map[uint32]*vniState // keyed by channel = saVNI(vni, r)
 	bus         *Bus
 	sched       *Scheduler
 	dir         *kpDirectory
-	dsIDs       []ActorID
+	dsIDs       []ActorID // dsIDs[r] = reflector R_r
 	metrics     *Metrics
 	checker     *InvariantChecker
-	W           int  // SA-overlap depth
+	W           int  // SA-overlap depth (make-before-break window)
 	mbbDisabled bool // negative control: W=0 + no sender-lag
 }
 
@@ -78,36 +101,36 @@ func newClient(id ActorID, suite cipher.Suite, signer crypto.Signer, identity st
 
 func ctx() context.Context { return context.Background() }
 
-// foundVNI makes this client the founder of vni (epoch 0 group).
-func (c *Client) foundVNI(vni uint32) {
+// reflectorFor returns the reflector that orders channel ch's replica.
+func (c *Client) reflectorFor(ch uint32) ActorID { return c.dsIDs[replicaOf(ch)] }
+
+// foundVNI makes this client the founder of channel ch (epoch-0 group).
+func (c *Client) foundVNI(ch uint32) {
 	st := newVNIState()
-	g := c.dir.newFounderGroup(c.suite, vni, c.identity, c.signer)
-	cfg := c.controllerCfg(vni)
-	ctrl, err := ironcore.NewController(cfg, g)
+	g := c.dir.newFounderGroup(c.suite, ch, c.identity, c.signer)
+	ctrl, err := ironcore.NewController(c.controllerCfg(ch), g)
 	if err != nil {
 		panic(err)
 	}
-	st.ctrl, st.joined = ctrl, true
-	st.joinEpoch = 0 // founder is in the group from epoch 0
-	c.vnis[vni] = st
-	c.bus.Subscribe(vni, c.id)
-	c.cacheCurrentSA(vni)
+	st.ctrl, st.joined, st.joinEpoch = ctrl, true, 0
+	c.vnis[ch] = st
+	c.bus.Subscribe(ch, c.id)
+	c.cacheCurrentSA(ch)
 }
 
-// prospectiveVNI registers this client as a prospective joiner of vni.
-func (c *Client) prospectiveVNI(vni uint32) {
+// prospectiveVNI registers this client as a prospective joiner of channel ch.
+func (c *Client) prospectiveVNI(ch uint32) {
 	st := newVNIState()
-	cfg := c.controllerCfg(vni)
-	ctrl, _ := ironcore.NewController(cfg, nil) // g=nil until welcome
+	ctrl, _ := ironcore.NewController(c.controllerCfg(ch), nil)
 	st.ctrl = ctrl
-	c.vnis[vni] = st
-	c.dir.publishKeyPackage(c.suite, vni, c.identity, c.signer)
-	c.bus.Subscribe(vni, c.id)
+	c.vnis[ch] = st
+	c.dir.publishKeyPackage(c.suite, ch, c.identity, c.signer)
+	c.bus.Subscribe(ch, c.id)
 }
 
-func (c *Client) controllerCfg(vni uint32) ironcore.ControllerConfig {
+func (c *Client) controllerCfg(ch uint32) ironcore.ControllerConfig {
 	return ironcore.ControllerConfig{
-		VNI:       vni,
+		VNI:       ch, // channel id drives BOTH GroupID and DeriveSAKeys
 		Suite:     c.suite,
 		Ordering:  optimisticOrdering{},
 		Clock:     fixedClock{},
@@ -115,47 +138,65 @@ func (c *Client) controllerCfg(vni uint32) ironcore.ControllerConfig {
 		Cred:      c.dir.cred(c.identity),
 		Signer:    c.signer,
 		Lifetime:  maxLifetime(),
-		Resolve:   c.dir.resolver(vni),
+		Resolve:   c.dir.resolver(ch),
 	}
 }
 
-// reconcile is invoked on the TimerReconcile: the committer drives the desired
-// membership set toward reality (design spec §3.3 / §10.3).
-func (c *Client) reconcile(vni uint32, desired [][]byte) {
-	st := c.vnis[vni]
+// canCommit gates new commits: the head must be confirmed landed at the reflector
+// and no Welcomes may be outstanding. This serializes each replica into a clean
+// single-writer stream and keeps an in-flight Welcome valid (the epoch does not
+// advance underneath it) until the joiner lands — the only reliability mechanism
+// needed in the no-fork model.
+func (c *Client) canCommit(ch uint32) bool {
+	st := c.vnis[ch]
 	if st == nil || !st.joined || !st.ctrl.IsCommitter() {
+		return false
+	}
+	if len(st.pendingWelcome) > 0 {
+		return false
+	}
+	if st.hasHead && !st.confirmed[st.headBase] {
+		return false
+	}
+	return true
+}
+
+// reconcile drives membership toward the desired set (committer only).
+func (c *Client) reconcile(ch uint32, desired [][]byte) {
+	if !c.canCommit(ch) {
 		return
 	}
+	st := c.vnis[ch]
 	t0 := time.Now()
 	res, err := st.ctrl.Reconcile(ctx(), desired)
 	c.metrics.cpu("Reconcile", time.Since(t0))
-	if err != nil && !isLostRace(err) {
+	if err != nil || !res.Committed {
 		return
 	}
-	if !res.Committed {
-		return
-	}
-	c.cacheCurrentSA(vni)
-	c.broadcastCommit(vni, st.ctrl.Epoch()-1, false, res.CommitMsg)
+	c.cacheCurrentSA(ch)
+	base := st.ctrl.Epoch() - 1
+	c.recordHead(ch, base, res.CommitMsg)
+	c.sendCommit(ch, base, res.CommitMsg)
 	if len(res.WelcomeMsg) > 0 && len(res.Added) > 0 {
+		curEpoch := st.ctrl.Epoch()
 		for _, id := range res.Added {
-			c.toDS(Envelope{
-				VNI:     vni,
-				Type:    MsgWelcome,
-				Joiner:  string(id),
-				Payload: res.WelcomeMsg,
-				Hash:    contentHash(res.WelcomeMsg),
-			})
+			if aid, ok := actorIDFromIdentity(string(id)); ok && aid != c.id {
+				if _, exists := st.peerEpoch[aid]; !exists {
+					st.peerEpoch[aid] = curEpoch
+				}
+			}
+			st.pendingWelcome[string(id)] = res.WelcomeMsg
 		}
+		c.sendWelcome(ch, res.WelcomeMsg, res.Added)
 	}
 }
 
-// rekey is invoked on the TimerRekey: committer issues an empty PCS Update.
-func (c *Client) rekey(vni uint32) {
-	st := c.vnis[vni]
-	if st == nil || !st.joined || !st.ctrl.IsCommitter() {
+// rekey issues an empty PCS Update (committer only).
+func (c *Client) rekey(ch uint32) {
+	if !c.canCommit(ch) {
 		return
 	}
+	st := c.vnis[ch]
 	base := st.ctrl.Epoch()
 	t0 := time.Now()
 	msg, won, err := st.ctrl.Rekey(ctx())
@@ -163,23 +204,26 @@ func (c *Client) rekey(vni uint32) {
 	if err != nil || !won || msg == nil {
 		return
 	}
-	c.cacheCurrentSA(vni)
-	c.broadcastCommit(vni, base, false, msg)
+	c.cacheCurrentSA(ch)
+	c.recordHead(ch, base, msg)
+	c.sendCommit(ch, base, msg)
+}
+
+// recordHead stores the latest committer-issued commit for confirm/resend.
+func (c *Client) recordHead(ch uint32, base uint64, msg []byte) {
+	st := c.vnis[ch]
+	st.outbox[base] = msg
+	st.hasHead, st.headBase = true, base
 }
 
 // onDeliver dispatches an inbound envelope.
 func (c *Client) onDeliver(env Envelope) {
-	st := c.vnis[env.VNI]
 	switch env.Type {
 	case MsgCommit:
 		c.onCommit(env)
 	case MsgWelcome:
-		if env.Joiner == c.identity && st != nil && !st.joined {
+		if env.Joiner == c.identity {
 			c.onWelcome(env)
-		}
-	case MsgGroupInfo:
-		if st != nil {
-			st.giByRef[env.Hash] = env.Payload
 		}
 	case MsgHeartbeat:
 		c.onHeartbeat(env)
@@ -195,69 +239,92 @@ func (c *Client) onCommit(env Envelope) {
 	if st == nil || !st.joined {
 		return
 	}
-	key := vniKey(env.VNI, env.Base)
-	for _, r := range st.seen[key] {
-		if string(r) == env.Hash {
-			goto resolve // already seen; still attempt fork-resolve
+	// A reflector echo of our own head confirms it landed at R_r.
+	if env.Src == c.reflectorFor(env.VNI) {
+		if _, ok := st.outbox[env.Base]; ok && contentHash(st.outbox[env.Base]) == env.Hash {
+			st.confirmed[env.Base] = true
 		}
 	}
-	st.seen[key] = append(st.seen[key], []byte(env.Hash))
-	if st.ctrl.Epoch() == env.Base {
-		t0 := time.Now()
-		err := st.ctrl.HandleCommit(env.Payload)
-		c.metrics.cpu("HandleCommit", time.Since(t0))
-		switch {
-		case err == nil:
-			st.applied[env.Base] = []byte(env.Hash)
-			c.cacheCurrentSA(env.VNI)
-			c.reportAuth(env.VNI)
-		case isSelfRemoved(err):
-			c.leaveVNI(env.VNI)
-			return
-		}
+	if st.ctrl.Epoch() != env.Base {
+		return // stale / future commit — first-wins; catch-up handles gaps
 	}
-resolve:
-	c.forkResolve(env.VNI, env.Base) // Task 7
+	before := c.leafIdentitySet(env.VNI)
+	t0 := time.Now()
+	err := st.ctrl.HandleCommit(env.Payload)
+	c.metrics.cpu("HandleCommit", time.Since(t0))
+	switch {
+	case err == nil:
+		c.cacheCurrentSA(env.VNI)
+		c.reportAuth(env.VNI)
+		c.initPeerEpochForNewMembers(env.VNI, before)
+	case isSelfRemoved(err):
+		c.leaveVNI(env.VNI)
+	}
 }
 
 func (c *Client) onWelcome(env Envelope) {
 	st := c.vnis[env.VNI]
+	if st == nil || st.joined {
+		return
+	}
 	kp, ip, lp := c.dir.joinerMaterial(env.VNI, c.identity)
 	t0 := time.Now()
 	err := st.ctrl.JoinViaWelcome(env.Payload, kp, ip, lp)
 	c.metrics.cpu("JoinViaWelcome", time.Since(t0))
 	if err != nil {
-		return // Welcome not addressed to our epoch / superseded; will catch up
+		return // Welcome superseded / not for our epoch; committer will resend
 	}
 	st.joined = true
 	st.joinEpoch = st.ctrl.Epoch()
 	c.cacheCurrentSA(env.VNI)
 	c.reportAuth(env.VNI)
-	// Immediately announce our join epoch to all peers so that senders update
-	// their peerEpoch and do not use a sendEpoch below our join epoch. Without
-	// this, the periodic heartbeat timer may not fire until several ticks after
-	// joining, leaving a window where a sender uses a stale (lower) sendEpoch
-	// that we cannot decrypt.
+	// Announce our join epoch immediately so senders learn we exist on this replica.
 	c.emitHeartbeat(env.VNI)
+	// Conservatively seed peerEpoch for existing members at joinEpoch-1 (they may
+	// not have processed our Add yet) so a sender does not run ahead of them.
+	if st.ctrl.Group() != nil {
+		init := st.ctrl.Epoch()
+		if init > 0 {
+			init--
+		}
+		for _, leaf := range st.ctrl.Group().ActiveLeaves() {
+			cred, _, err2 := st.ctrl.Group().LeafCredential(leaf)
+			if err2 != nil {
+				continue
+			}
+			if aid, ok := actorIDFromIdentity(string(cred.Identity)); ok && aid != c.id {
+				if _, exists := st.peerEpoch[aid]; !exists {
+					st.peerEpoch[aid] = init
+				}
+			}
+		}
+	}
 }
 
-// onHeartbeat updates peer epoch tracking and triggers catch-up if behind.
+// onHeartbeat updates peer-epoch tracking and triggers catch-up if behind. When
+// a joiner reports in, the committer clears it from the pending-Welcome set.
 func (c *Client) onHeartbeat(env Envelope) {
 	st := c.vnis[env.VNI]
 	if st == nil || !st.joined {
 		return
 	}
-	st.peerEpoch[env.Src] = env.Base
+	st.heard[env.Src] = true
+	if env.Base > st.peerEpoch[env.Src] || st.peerEpoch[env.Src] == 0 {
+		st.peerEpoch[env.Src] = env.Base
+	}
+	if id, ok := identityFromActorID(env.Src); ok {
+		delete(st.pendingWelcome, id)
+	}
 	if env.Base > st.ctrl.Epoch() {
 		c.requestCatchup(env.VNI, st.ctrl.Epoch())
 	}
 }
 
-func (c *Client) requestCatchup(vni uint32, from uint64) {
-	if st := c.vnis[vni]; st != nil {
+func (c *Client) requestCatchup(ch uint32, from uint64) {
+	if st := c.vnis[ch]; st != nil {
 		st.catchupReqs[from]++
 	}
-	c.toDS(Envelope{VNI: vni, Type: MsgLogRequest, Base: from})
+	c.toReflector(ch, Envelope{VNI: ch, Type: MsgLogRequest, Base: from})
 	c.metrics.CatchupRequests++
 }
 
@@ -268,208 +335,160 @@ func (c *Client) onLogReply(env Envelope) {
 	}
 	recs := append([]CommitRecord(nil), env.Records...)
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Base < recs[j].Base })
-	progressed := false
 	for _, r := range recs {
 		if st.ctrl.Epoch() != r.Base {
 			continue
 		}
-		key := vniKey(env.VNI, r.Base)
-		st.seen[key] = append(st.seen[key], []byte(r.Hash))
+		before := c.leafIdentitySet(env.VNI)
 		if err := st.ctrl.HandleCommit(r.Bytes); err == nil {
-			st.applied[r.Base] = []byte(r.Hash)
 			c.cacheCurrentSA(env.VNI)
 			c.reportAuth(env.VNI)
-			progressed = true
-		}
-	}
-	// Fallback: only jump via external-commit after ≥ 2 catch-up request rounds
-	// with no progress. A single zero-progress reply is normal when the log
-	// request races the commit to the DS (jitter in Nominal can cause this).
-	// Requiring 2 rounds ensures the commit has had time to reach the DS before
-	// we resort to an external commit, which would create a competing branch.
-	if !progressed {
-		curEpoch := st.ctrl.Epoch()
-		if st.catchupReqs[curEpoch] >= 2 {
-			if hb := c.maxPeerEpoch(env.VNI); hb > curEpoch {
-				c.recoverViaLatestGI(env.VNI)
-			}
+			c.initPeerEpochForNewMembers(env.VNI, before)
+		} else if isSelfRemoved(err) {
+			c.leaveVNI(env.VNI)
+			return
 		}
 	}
 }
 
-func (c *Client) reportAuth(vni uint32) {
-	st := c.vnis[vni]
-	c.checker.reportAuth(vni, st.ctrl.Epoch(), st.ctrl.Group().EpochAuthenticator())
+func (c *Client) reportAuth(ch uint32) {
+	st := c.vnis[ch]
+	c.checker.reportAuth(ch, st.ctrl.Epoch(), st.ctrl.Group().EpochAuthenticator())
 }
 
-func (c *Client) maxPeerEpoch(vni uint32) uint64 {
-	st := c.vnis[vni]
-	var mx uint64
-	for _, a := range sortedActorEpochs(st.peerEpoch) {
-		if st.peerEpoch[a] > mx {
-			mx = st.peerEpoch[a]
-		}
-	}
-	return mx
+func (c *Client) leaveVNI(ch uint32) {
+	c.bus.Unsubscribe(ch, c.id)
+	delete(c.vnis, ch)
 }
 
-func (c *Client) leaveVNI(vni uint32) {
-	c.bus.Unsubscribe(vni, c.id)
-	delete(c.vnis, vni)
+// sendCommit publishes a commit to this replica's reflector ONLY (no dual-peering;
+// replica r is ordered exclusively by R_r).
+func (c *Client) sendCommit(ch uint32, base uint64, msg []byte) {
+	c.toReflector(ch, Envelope{
+		VNI:     ch,
+		Type:    MsgCommit,
+		Base:    base,
+		Payload: msg,
+		Hash:    contentHash(msg),
+	})
+	c.metrics.commitFanout(ch, len(msg), 1)
 }
 
-// broadcastCommit publishes a commit to BOTH reflectors (dual-peering).
-func (c *Client) broadcastCommit(vni uint32, base uint64, external bool, msg []byte) {
-	env := Envelope{
-		VNI:      vni,
-		Type:     MsgCommit,
-		Base:     base,
-		External: external,
-		Payload:  msg,
-		Hash:     contentHash(msg),
-	}
-	c.toDS(env) // toDS publishes directly to each DS; do not double-wrap in bus.Publish
-	c.metrics.commitFanout(vni, len(msg), len(c.dsIDs))
-	// publish our GroupInfo too (for recovery / external join)
-	if st := c.vnis[vni]; st != nil && st.joined {
-		if gi, err := st.ctrl.PublishGroupInfo(); err == nil {
-			if gb, err := gi.MarshalMLS(); err == nil {
-				giEnv := Envelope{
-					VNI:     vni,
-					Type:    MsgGroupInfo,
-					Base:    st.ctrl.Epoch(),
-					Payload: gb,
-					Hash:    contentHash(msg), // keyed by the commit hash → fetchGI
-				}
-				c.toDS(giEnv)
-				st.giByRef[contentHash(msg)] = gb
-			}
-		}
+func (c *Client) sendWelcome(ch uint32, welcome []byte, added [][]byte) {
+	for _, id := range added {
+		c.toReflector(ch, Envelope{
+			VNI:     ch,
+			Type:    MsgWelcome,
+			Joiner:  string(id),
+			Payload: welcome,
+			Hash:    contentHash(welcome),
+		})
 	}
 }
 
-// toDS sends env to EVERY configured DS reflector (dual-peering). It does NOT
-// return a meaningful envelope; callers must NOT wrap it in bus.Publish.
-func (c *Client) toDS(env Envelope) Envelope {
+// toReflector sends env to the single reflector ordering channel ch's replica.
+func (c *Client) toReflector(ch uint32, env Envelope) {
 	env.Src = c.id
-	for _, ds := range c.dsIDs {
-		e := env
-		e.Dst = ds
-		c.bus.Publish(e)
-	}
-	return env
+	env.Dst = c.reflectorFor(ch)
+	c.bus.Publish(env)
 }
 
-// ─── Task 7: fork detection + resolution + recovery ──────────────────────────
-
-// forkResolve runs the §3.3 / N3 resolution glue for a contested (vni, base).
-func (c *Client) forkResolve(vni uint32, base uint64) {
-	st := c.vnis[vni]
-	if st == nil || !st.joined {
+// resendUnacked re-delivers the unconfirmed head commit + any outstanding
+// Welcomes to the reflector (idempotent: the register de-dups, JoinViaWelcome is
+// retried). Driven off the heartbeat timer so it is fully deterministic. This is
+// the entire drop/failover recovery story — no external commits, no forks.
+func (c *Client) resendUnacked(ch uint32) {
+	st := c.vnis[ch]
+	if st == nil || !st.joined || !st.ctrl.IsCommitter() {
 		return
 	}
-	key := vniKey(vni, base)
-	refs := dedupRefs(st.seen[key])
-	if len(refs) < 2 {
-		return
-	}
-	c.checker.markDivergence(vni, base)
-	applied, ok := st.applied[base]
-	if !ok || st.recovered[base] {
-		return
-	}
-	canon := sequencer.CanonicalCommit(c.suite, toGroupRefs(refs))
-	if string(canon) == string(applied) {
-		return // already on the canonical branch
-	}
-	// Off-canonical: recover to the canonical branch via external commit.
-	fetchGI := func(ref group.CommitRef) (*group.GroupInfo, error) {
-		gb := st.giByRef[string(ref)]
-		if gb == nil {
-			return nil, errNoGI
+	if st.hasHead && !st.confirmed[st.headBase] {
+		if msg, ok := st.outbox[st.headBase]; ok {
+			c.toReflector(ch, Envelope{VNI: ch, Type: MsgCommit, Base: st.headBase,
+				Payload: msg, Hash: contentHash(msg)})
+			c.metrics.CommitResends++
 		}
-		var gi group.GroupInfo
-		if err := gi.UnmarshalMLS(gb); err != nil {
-			return nil, err
-		}
-		return &gi, nil
 	}
-	t0 := time.Now()
-	recMsg, err := st.ctrl.AutoRecover(ctx(), toGroupRefs(refs), fetchGI)
-	c.metrics.cpu("AutoRecover", time.Since(t0))
-	if err != nil {
-		return // target GI not yet available; retried as more GroupInfos arrive
+	for _, id := range sortedStrKeys(st.pendingWelcome) {
+		w := st.pendingWelcome[id]
+		c.toReflector(ch, Envelope{VNI: ch, Type: MsgWelcome, Joiner: id,
+			Payload: w, Hash: contentHash(w)})
 	}
-	st.recovered[base] = true
-	c.cacheCurrentSA(vni)
-	c.reportAuth(vni)
-	c.metrics.Recoveries++
-	c.metrics.LostRekeys++ // the loser's branch rekey is discarded (design spec §3.6)
-	// broadcast the recovery (external) commit; its base is the canonical epoch.
-	newBase := st.ctrl.Epoch() - 1
-	st.applied[newBase] = []byte(contentHash(recMsg))
-	c.broadcastCommit(vni, newBase, true, recMsg)
 }
 
-// recoverViaLatestGI is the catch-up fallback (partition / no usable log).
-// It picks the highest-epoch cached GroupInfo and uses ctrl.AutoRecover to
-// properly update the controller state (direct RecoverViaExternalCommit would
-// update the VNIGroup but not the controller's internal group pointer).
-func (c *Client) recoverViaLatestGI(vni uint32) {
-	st := c.vnis[vni]
-	if len(st.giByRef) == 0 {
+// ─── data plane: per-replica make-before-break + sender-lag + cross-replica ──────
+
+// actorIDFromIdentity parses "client-N" -> ActorID(N).
+func actorIDFromIdentity(identity string) (ActorID, bool) {
+	var n int
+	if _, err := fmt.Sscanf(identity, "client-%d", &n); err == nil {
+		return ActorID(n), true
+	}
+	return -1, false
+}
+
+func identityFromActorID(a ActorID) (string, bool) {
+	if a < 0 {
+		return "", false
+	}
+	return fmt.Sprintf("client-%d", int(a)), true
+}
+
+func (c *Client) leafIdentitySet(ch uint32) map[string]bool {
+	st := c.vnis[ch]
+	if st == nil || !st.joined || st.ctrl.Group() == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, leaf := range st.ctrl.Group().ActiveLeaves() {
+		if cred, _, err := st.ctrl.Group().LeafCredential(leaf); err == nil {
+			out[string(cred.Identity)] = true
+		}
+	}
+	return out
+}
+
+// replicaMembers returns the actor set in this client's view of channel ch.
+func (c *Client) replicaMembers(ch uint32) map[ActorID]bool {
+	out := map[ActorID]bool{}
+	for id := range c.leafIdentitySet(ch) {
+		if aid, ok := actorIDFromIdentity(id); ok {
+			out[aid] = true
+		}
+	}
+	return out
+}
+
+// initPeerEpochForNewMembers seeds peerEpoch=currentEpoch for members added by the
+// commit just applied (they joined at this epoch). Pre-existing members are left
+// untouched (they may still be behind).
+func (c *Client) initPeerEpochForNewMembers(ch uint32, beforeLeaves map[string]bool) {
+	st := c.vnis[ch]
+	if st == nil || !st.joined || st.ctrl.Group() == nil {
 		return
 	}
-	// Find the GroupInfo with the highest epoch so we jump to the latest state.
-	var bestRef string
-	var bestEpoch uint64
-	hasAny := false
-	for _, ref := range sortedRefKeys(st.giByRef) {
-		var gi group.GroupInfo
-		if gi.UnmarshalMLS(st.giByRef[ref]) != nil {
+	cur := st.ctrl.Epoch()
+	for _, leaf := range st.ctrl.Group().ActiveLeaves() {
+		cred, _, err := st.ctrl.Group().LeafCredential(leaf)
+		if err != nil {
 			continue
 		}
-		if !hasAny || gi.GroupContext.Epoch > bestEpoch {
-			bestRef = ref
-			bestEpoch = gi.GroupContext.Epoch
-			hasAny = true
+		id := string(cred.Identity)
+		if beforeLeaves[id] {
+			continue
+		}
+		if aid, ok := actorIDFromIdentity(id); ok && aid != c.id {
+			if _, exists := st.peerEpoch[aid]; !exists {
+				st.peerEpoch[aid] = cur
+			}
 		}
 	}
-	if !hasAny || bestEpoch < st.ctrl.Epoch() {
-		return
-	}
-	fetchGI := func(ref group.CommitRef) (*group.GroupInfo, error) {
-		gb := st.giByRef[string(ref)]
-		if gb == nil {
-			return nil, errNoGI
-		}
-		var gi group.GroupInfo
-		if err := gi.UnmarshalMLS(gb); err != nil {
-			return nil, err
-		}
-		return &gi, nil
-	}
-	refs := []group.CommitRef{group.CommitRef(bestRef)}
-	t0 := time.Now()
-	recMsg, err := st.ctrl.AutoRecover(ctx(), refs, fetchGI)
-	c.metrics.cpu("AutoRecover", time.Since(t0))
-	if err != nil {
-		return
-	}
-	c.cacheCurrentSA(vni)
-	c.reportAuth(vni)
-	c.metrics.Recoveries++
-	newBase := st.ctrl.Epoch() - 1
-	st.applied[newBase] = []byte(contentHash(recMsg))
-	c.broadcastCommit(vni, newBase, true, recMsg)
 }
 
-// ─── Task 8: data-plane SA cache + sender-lag ────────────────────────────────
-
-// cacheCurrentSA derives and stores the current-epoch SA (derive-time cache;
-// past epochs cannot be re-derived — forward secrecy, design spec §3.7).
-func (c *Client) cacheCurrentSA(vni uint32) {
-	st := c.vnis[vni]
+// cacheCurrentSA derives + stores the current-epoch SA (derive-time cache; past
+// epochs cannot be re-derived — forward secrecy).
+func (c *Client) cacheCurrentSA(ch uint32) {
+	st := c.vnis[ch]
 	if st == nil || !st.joined {
 		return
 	}
@@ -478,14 +497,13 @@ func (c *Client) cacheCurrentSA(vni uint32) {
 		return
 	}
 	st.saCache[sa.Epoch] = sa
-	c.trimSAs(vni)
+	c.trimSAs(ch)
 	c.metrics.observeOverlap(len(st.saCache))
 }
 
-// trimSAs enforces the overlap window: keep only [cur-W .. cur]. W=0 (negative
-// control) keeps only the current epoch.
-func (c *Client) trimSAs(vni uint32) {
-	st := c.vnis[vni]
+// trimSAs enforces the per-replica overlap window [cur-W .. cur].
+func (c *Client) trimSAs(ch uint32) {
+	st := c.vnis[ch]
 	cur := st.ctrl.Epoch()
 	w := uint64(c.effectiveW())
 	for _, e := range sortedEpochs(st.saCache) {
@@ -502,11 +520,11 @@ func (c *Client) effectiveW() int {
 	return c.W
 }
 
-// sendEpoch is the sender-lag policy: send under the latest GROUP-WIDE-converged
-// epoch = min over self + all heartbeat peers (design spec §3.7). With
-// mbbDisabled it sends under the client's own current epoch (negative control).
-func (c *Client) sendEpoch(vni uint32) uint64 {
-	st := c.vnis[vni]
+// sendEpoch is the per-replica sender-lag: the latest epoch believed group-wide
+// converged = min over self + all known co-replica members. With mbbDisabled it
+// sends under the client's own current epoch (negative control).
+func (c *Client) sendEpoch(ch uint32) uint64 {
+	st := c.vnis[ch]
 	cur := st.ctrl.Epoch()
 	if c.mbbDisabled {
 		return cur
@@ -520,46 +538,77 @@ func (c *Client) sendEpoch(vni uint32) uint64 {
 	return mn
 }
 
-// sendData generates a tenant packet tagged with the send-SA (TimerData).
-func (c *Client) sendData(vni uint32) {
-	st := c.vnis[vni]
-	if st == nil || !st.joined {
-		return
-	}
-	se := c.sendEpoch(vni)
-	sa, ok := st.saCache[se]
-	if !ok {
-		// fall back to current if min was trimmed
-		sa, ok = st.saCache[st.ctrl.Epoch()]
-		se = st.ctrl.Epoch()
-	}
-	if !ok {
-		return
-	}
-	c.metrics.observeSendLag(st.ctrl.Epoch() - se)
-	c.bus.Publish(Envelope{
-		VNI:  vni,
-		Type: MsgData,
-		Src:  c.id,
-		Dst:  Broadcast,
-		Base: se,
-		SPI:  sa.SPI,
-	})
-	c.metrics.DataSent++
+// dataCand is one usable replica candidate for a sender at this instant.
+type dataCand struct {
+	ch      uint32
+	se      uint64
+	spi     uint32
+	ok      bool
+	members map[ActorID]bool
+	heard   map[ActorID]bool
 }
 
-// onData is the inv. 5 check point: a delivered (non-dropped) packet MUST be
-// decryptable by this receiver (design spec §3.5 inv. 5 / §3.7).
+// sendData emits tenant data packets. For each receiver it picks SOME replica
+// where the sender holds a send-SA and the receiver is a (preferably heard-from)
+// member — so even if one replica is stalled/down/partitioned for that receiver,
+// the other carries the packet (the redundancy headline, rev 5 §0 inv. 2).
+func (c *Client) sendData(tenant uint32) {
+	cands := make([]*dataCand, numDS)
+	recv := map[ActorID]bool{}
+	for r := 0; r < numDS; r++ {
+		ch := saVNI(tenant, r)
+		st := c.vnis[ch]
+		if st == nil || !st.joined {
+			continue
+		}
+		se := c.sendEpoch(ch)
+		sa, ok := st.saCache[se]
+		cd := &dataCand{ch: ch, se: se, spi: sa.SPI, ok: ok,
+			members: c.replicaMembers(ch), heard: st.heard}
+		cands[r] = cd
+		for a := range cd.members {
+			recv[a] = true
+		}
+	}
+	for _, rcv := range sortedActorSet(recv) {
+		if rcv == c.id {
+			continue
+		}
+		c.sendToReceiver(tenant, rcv, cands)
+	}
+}
+
+func (c *Client) sendToReceiver(tenant uint32, rcv ActorID, cands []*dataCand) {
+	// Pass 1: prefer a replica where we've heard a heartbeat from the receiver
+	// (confirmed live + converged there). Pass 2: any replica it's a member of.
+	for _, requireHeard := range []bool{true, false} {
+		for r := 0; r < numDS; r++ {
+			cd := cands[r]
+			if cd == nil || !cd.ok || !cd.members[rcv] {
+				continue
+			}
+			if requireHeard && !cd.heard[rcv] {
+				continue
+			}
+			st := c.vnis[cd.ch]
+			c.metrics.observeSendLag(st.ctrl.Epoch() - cd.se)
+			c.bus.Publish(Envelope{VNI: cd.ch, Type: MsgData, Src: c.id, Dst: rcv,
+				Base: cd.se, SPI: cd.spi})
+			c.metrics.DataSent++
+			return
+		}
+	}
+}
+
+// onData is the inv. 2 (zero key-loss) check point: a delivered (non-dropped)
+// packet MUST be decryptable by the receiver under some replica SA it holds.
 func (c *Client) onData(env Envelope) {
 	st := c.vnis[env.VNI]
 	if st == nil || !st.joined {
-		return // not a live member of this VNI ⇒ packet is not "for" us
+		return // not a live member of this replica ⇒ the packet is not "for" us
 	}
-	// Packets sent before this member joined the group are not the receiver's
-	// SA responsibility: the receiver never held the key for pre-join epochs.
-	// Forward secrecy is intentional; this is not a key-loss failure.
 	if env.Base < st.joinEpoch {
-		return
+		return // pre-join epoch: we never held that key (forward secrecy, not a loss)
 	}
 	for _, e := range sortedEpochs(st.saCache) {
 		if st.saCache[e].SPI == env.SPI {
@@ -567,21 +616,40 @@ func (c *Client) onData(env Envelope) {
 			return
 		}
 	}
-	// Undecryptable, non-dropped ⇒ PACKET-LOSS FAIL (design spec inv. 5).
 	c.checker.packetLoss(uint64(env.VNI), env.Base, st.ctrl.Epoch(), c.sched.Now())
 }
 
-// emitHeartbeat advertises our current epoch on each VNI (TimerHeartbeat).
-func (c *Client) emitHeartbeat(vni uint32) {
-	st := c.vnis[vni]
+// emitHeartbeat advertises our current epoch on channel ch and (committer only)
+// resends any unconfirmed head commit / outstanding Welcomes.
+func (c *Client) emitHeartbeat(ch uint32) {
+	st := c.vnis[ch]
 	if st == nil || !st.joined {
 		return
 	}
 	c.bus.Publish(Envelope{
-		VNI:  vni,
+		VNI:  ch,
 		Type: MsgHeartbeat,
 		Src:  c.id,
 		Dst:  Broadcast,
 		Base: st.ctrl.Epoch(),
 	})
+	c.resendUnacked(ch)
+}
+
+func sortedActorSet(m map[ActorID]bool) []ActorID {
+	out := make([]ActorID, 0, len(m))
+	for a := range m {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func sortedStrKeys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

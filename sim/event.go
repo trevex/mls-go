@@ -48,25 +48,23 @@ func (m MsgType) String() string {
 
 // Envelope is one in-flight message (design spec §3.1).
 type Envelope struct {
-	VNI      uint32
-	Type     MsgType
-	Src      ActorID
-	Dst      ActorID        // Broadcast or a specific actor
-	Base     uint64         // base epoch a commit was produced FROM (commit), or data/heartbeat epoch
-	External bool           // commit is a new_member_commit (external)
-	Payload  []byte         // real MLS/ironcore bytes (commit/welcome/groupInfo) or nil
-	SPI      uint32         // for MsgData: the sender's send-SA SPI
-	Records  []CommitRecord // for MsgLogReply
-	Joiner   string         // for MsgWelcome: identity the Welcome is addressed to
-	Hash     string         // content hash for dedup (set by sender)
+	VNI     uint32
+	Type    MsgType
+	Src     ActorID
+	Dst     ActorID        // Broadcast or a specific actor
+	Base    uint64         // base epoch a commit was produced FROM (commit), or data/heartbeat epoch
+	Payload []byte         // real MLS/ironcore bytes (commit/welcome) or nil
+	SPI     uint32         // for MsgData: the sender's send-SA SPI
+	Records []CommitRecord // for MsgLogReply
+	Joiner  string         // for MsgWelcome: identity the Welcome is addressed to
+	Hash    string         // content hash for dedup (set by sender)
 }
 
 // CommitRecord is one entry in a DS per-VNI committed log (design spec §3.2).
 type CommitRecord struct {
-	Base     uint64
-	External bool
-	Bytes    []byte
-	Hash     string
+	Base  uint64
+	Bytes []byte
+	Hash  string
 }
 
 // EventKind tags an event's dispatch (design spec §2).

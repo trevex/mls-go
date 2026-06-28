@@ -1,77 +1,93 @@
 package sim
 
-import "sort"
+import (
+	"context"
+	"sort"
 
-// DS is one MetalBond reflector: a dumb, eventually-consistent AP fan-out with a
-// per-VNI commit log + GroupInfo cache + catch-up service (design spec §3.2).
-// NO register, NO lease, NO ownership, NO consensus.
+	"github.com/trevex/mls-mlkem-go/ironcore"
+	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
+	"github.com/trevex/mls-mlkem-go/mls/group"
+)
+
+// DS is one MetalBond reflector R_r ordering replica r of every VNI (design spec
+// rev 5 §0). It owns its OWN local accept-once register (sequencer.MemorySequencer,
+// one per reflector, NEVER shared) plus a per-channel commit log + catch-up
+// service. Because each replica is ordered by exactly one reflector and committed
+// by a single designated committer, the register emits a true total order and the
+// replica never forks. There is NO cross-reflector contact, NO lease, NO consensus.
 type DS struct {
 	id      ActorID
+	replica int
 	bus     *Bus
 	faults  *faultState
-	logs    map[uint32][]CommitRecord    // vni -> received-order commit log
-	giCache map[uint32]map[string][]byte // vni -> ref(hash) -> GroupInfo bytes
-	latest  map[uint32][]byte            // vni -> latest GroupInfo bytes
+	seq     *sequencer.MemorySequencer // this reflector's local accept-once register
+	logs    map[uint32][]CommitRecord  // channel(saVNI) -> serialized commit log
 }
 
-func newDS(id ActorID, bus *Bus, f *faultState) *DS {
+func newDS(id ActorID, replica int, bus *Bus, f *faultState) *DS {
 	return &DS{
-		id: id, bus: bus, faults: f,
-		logs:    map[uint32][]CommitRecord{},
-		giCache: map[uint32]map[string][]byte{},
-		latest:  map[uint32][]byte{},
+		id: id, replica: replica, bus: bus, faults: f,
+		seq:  sequencer.NewMemorySequencer(),
+		logs: map[uint32][]CommitRecord{},
 	}
 }
 
-// handle dispatches an inbound envelope to this DS.
+// handle dispatches an inbound envelope to this reflector. Channels are saVNI
+// values; this reflector only ever receives traffic for its own replica because
+// clients route replica-r control messages exclusively to R_r.
 func (d *DS) handle(env Envelope, m *Metrics) {
 	if d.faults.isDown(d.id) {
-		return // a downed reflector ignores everything (design spec §3.2 failover)
+		return // a downed reflector ignores everything (replica r stalls; the other replica carries the data plane)
 	}
 	switch env.Type {
 	case MsgCommit:
-		d.appendLog(env)
-		d.reflect(env, m)
-	case MsgGroupInfo:
-		d.cacheGI(env)
-		d.reflect(env, m)
-	case MsgWelcome, MsgHeartbeat:
+		d.onCommit(env, m)
+	case MsgWelcome:
 		d.reflect(env, m)
 	case MsgLogRequest:
 		d.serveCatchup(env, m)
 	}
 }
 
-// appendLog records the commit in receive order (the two DS may diverge — AP).
+// onCommit serializes a commit through this reflector's local register. The first
+// commit to win (channel, epoch) is appended + fanned out; any different commit
+// for an already-decided slot is dropped. A re-submitted identical commit (a
+// resend after a drop) is idempotently accepted and re-fanned-out.
+func (d *DS) onCommit(env Envelope, m *Metrics) {
+	gid := group.GroupID(ironcore.GroupID(env.VNI))
+	ref := group.CommitRef([]byte(env.Hash))
+	ok, err := d.seq.AcceptCommit(context.Background(), gid, env.Base, ref)
+	if err != nil || !ok {
+		m.CommitRejected++
+		return
+	}
+	d.appendLog(env)
+	d.reflect(env, m)
+}
+
+// appendLog records the winning commit in serialized order (dedup by hash so an
+// idempotent resend does not duplicate the log entry).
 func (d *DS) appendLog(env Envelope) {
 	for _, r := range d.logs[env.VNI] {
 		if r.Hash == env.Hash {
-			return // dedup
+			return
 		}
 	}
 	d.logs[env.VNI] = append(d.logs[env.VNI], CommitRecord{
-		Base: env.Base, External: env.External, Bytes: env.Payload, Hash: env.Hash,
+		Base: env.Base, Bytes: env.Payload, Hash: env.Hash,
 	})
 }
 
-func (d *DS) cacheGI(env Envelope) {
-	if d.giCache[env.VNI] == nil {
-		d.giCache[env.VNI] = map[string][]byte{}
-	}
-	d.giCache[env.VNI][env.Hash] = env.Payload
-	d.latest[env.VNI] = env.Payload
-}
-
-// reflect best-effort re-publishes to all VNI subscribers (BGP-RR behaviour).
+// reflect re-publishes to all channel subscribers (BGP-RR fan-out).
 func (d *DS) reflect(env Envelope, m *Metrics) {
 	out := env
-	out.Src = d.id // reflected from this DS
+	out.Src = d.id
 	out.Dst = Broadcast
 	d.bus.Publish(out)
 	m.Reflected++
 }
 
-// serveCatchup answers a logRequest with the records this DS holds ≥ fromEpoch.
+// serveCatchup answers a logRequest with the records this reflector holds ≥ fromEpoch.
 func (d *DS) serveCatchup(env Envelope, m *Metrics) {
 	var recs []CommitRecord
 	for _, r := range d.logs[env.VNI] {
@@ -80,15 +96,11 @@ func (d *DS) serveCatchup(env Envelope, m *Metrics) {
 		}
 	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Base < recs[j].Base })
-	reply := Envelope{VNI: env.VNI, Type: MsgLogReply, Src: d.id, Dst: env.Src, Records: recs}
-	d.bus.Publish(reply)
-	// also serve the latest GroupInfo for the external-commit fallback
-	if gi := d.latest[env.VNI]; gi != nil {
-		d.bus.Publish(Envelope{VNI: env.VNI, Type: MsgGroupInfo, Src: d.id, Dst: env.Src,
-			Payload: gi, Hash: contentHash(gi)})
-	}
+	d.bus.Publish(Envelope{VNI: env.VNI, Type: MsgLogReply, Src: d.id, Dst: env.Src, Records: recs})
 	m.LogRetransmits++
 }
 
-// restart re-enables a downed DS (state is re-learned via the bus over time).
-func (d *DS) restart() { /* faultState.dsDown[d.id] cleared by the lifting FaultOp */ }
+// restart re-enables a downed reflector; its register/log persist across the
+// outage (the same in-process actor), so on return it simply resumes serializing
+// + serving catch-up and the stalled replica advances again.
+func (d *DS) restart() {}

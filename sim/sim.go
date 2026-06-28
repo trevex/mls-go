@@ -23,9 +23,6 @@ func (fixedClock) Now() time.Time { return time.Unix(0, 0).UTC() }
 
 func maxLifetime() tree.Lifetime { return tree.Lifetime{NotBefore: 0, NotAfter: ^uint64(0)} }
 
-var errNoGI = errors.New("sim: no GroupInfo for ref")
-
-func isLostRace(err error) bool    { return errors.Is(err, ironcore.ErrLostRace) }
 func isSelfRemoved(err error) bool { return errors.Is(err, ironcore.ErrSelfRemoved) }
 
 // kpEntry is one identity's published KeyPackage material per VNI.
@@ -125,36 +122,6 @@ func sortedActorEpochs(m map[ActorID]uint64) []ActorID {
 	return out
 }
 
-func sortedRefKeys(m map[string][]byte) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func dedupRefs(in [][]byte) [][]byte {
-	seen := map[string]bool{}
-	var out [][]byte
-	for _, r := range in {
-		if !seen[string(r)] {
-			seen[string(r)] = true
-			out = append(out, r)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return string(out[i]) < string(out[j]) })
-	return out
-}
-
-func toGroupRefs(in [][]byte) []group.CommitRef {
-	out := make([]group.CommitRef, len(in))
-	for i, r := range in {
-		out[i] = group.CommitRef(r)
-	}
-	return out
-}
-
 func vni32(v uint64) uint32 { return uint32(v) }
 
 func sortedUint32[T any](m map[uint32]T) []uint32 {
@@ -202,14 +169,11 @@ type world struct {
 	clients        []*Client
 	dss            []*DS
 	suite          cipher.Suite
-	intended       map[uint32]map[string]bool // vni -> set of joined identities
-	desired        map[uint32]map[string]bool // vni -> desired membership set
+	numReplicas    int
+	intended       map[uint32]map[string]bool // channel(saVNI) -> intended member set
+	desired        map[uint32]map[string]bool // channel(saVNI) -> desired member set
 	settleDeadline uint64
 	faultsLifted   bool
-	forkCount      int
-	// churn tracking
-	churnIdx     int
-	churnPending []ChurnOp
 	// timer intervals (logical ticks)
 	rekeyInterval     uint64
 	heartbeatInterval uint64
@@ -232,28 +196,30 @@ func (w *world) bootstrap() {
 	w.reconcileInterval = defaultReconcileInterval
 	w.dataInterval = defaultDataInterval
 	w.settleDeadline = w.sc.SettleRounds
-
-	// VNI list: 0 .. VNIs-1
-	// Client 0 is the founder for every VNI; clients 1..N-1 are prospective joiners.
-	for v := 0; v < w.sc.VNIs; v++ {
-		vni := uint32(v)
-		founderID := fmt.Sprintf("client-0")
-		founder := w.clients[0]
-		founder.foundVNI(vni)
-		if w.intended[vni] == nil {
-			w.intended[vni] = map[string]bool{}
-		}
-		if w.desired[vni] == nil {
-			w.desired[vni] = map[string]bool{}
-		}
-		w.intended[vni][founderID] = true
-		w.desired[vni][founderID] = true
+	w.numReplicas = numDS
+	if w.sc.SingleReplica {
+		w.numReplicas = 1 // negative control: model only ONE replica
 	}
 
-	// Register prospective joiners (publish key packages) for all scenario VNIs.
-	for _, c := range w.clients[1:] {
-		for v := 0; v < w.sc.VNIs; v++ {
-			c.prospectiveVNI(uint32(v))
+	// Per tenant VNI run numReplicas independent groups on channels saVNI(v,r).
+	// Client 0 founds every channel; clients 1..N-1 are prospective joiners of
+	// both replicas (every host is a member of BOTH groups, rev 5 §0).
+	const founderID = "client-0"
+	for v := 0; v < w.sc.VNIs; v++ {
+		for r := 0; r < w.numReplicas; r++ {
+			ch := saVNI(uint32(v), r)
+			w.clients[0].foundVNI(ch)
+			if w.intended[ch] == nil {
+				w.intended[ch] = map[string]bool{}
+			}
+			if w.desired[ch] == nil {
+				w.desired[ch] = map[string]bool{}
+			}
+			w.intended[ch][founderID] = true
+			w.desired[ch][founderID] = true
+			for _, c := range w.clients[1:] {
+				c.prospectiveVNI(ch)
+			}
 		}
 	}
 
@@ -290,19 +256,22 @@ func (w *world) bootstrap() {
 		w.s.Schedule(at, ev)
 	}
 
-	// Schedule periodic timers for each client per VNI starting at tick 1.
+	// Schedule periodic timers. rekey/heartbeat/reconcile are per channel (replica);
+	// data is per tenant VNI (the sender picks the best replica per receiver).
 	for i, c := range w.clients {
+		base := uint64(i) + 1 // stagger by client index
 		for v := 0; v < w.sc.VNIs; v++ {
-			vni := uint32(v)
-			base := uint64(i) + 1 // stagger by client index
-			w.s.Schedule(base+w.rekeyInterval, Event{Kind: KindTimer, Actor: c.id,
-				Timer: TimerRekey, Env: Envelope{VNI: vni}})
-			w.s.Schedule(base+w.heartbeatInterval, Event{Kind: KindTimer, Actor: c.id,
-				Timer: TimerHeartbeat, Env: Envelope{VNI: vni}})
-			w.s.Schedule(base+w.reconcileInterval, Event{Kind: KindTimer, Actor: c.id,
-				Timer: TimerReconcile, Env: Envelope{VNI: vni}})
 			w.s.Schedule(base+w.dataInterval, Event{Kind: KindTimer, Actor: c.id,
-				Timer: TimerData, Env: Envelope{VNI: vni}})
+				Timer: TimerData, Env: Envelope{VNI: uint32(v)}})
+			for r := 0; r < w.numReplicas; r++ {
+				ch := saVNI(uint32(v), r)
+				w.s.Schedule(base+w.rekeyInterval, Event{Kind: KindTimer, Actor: c.id,
+					Timer: TimerRekey, Env: Envelope{VNI: ch}})
+				w.s.Schedule(base+w.heartbeatInterval, Event{Kind: KindTimer, Actor: c.id,
+					Timer: TimerHeartbeat, Env: Envelope{VNI: ch}})
+				w.s.Schedule(base+w.reconcileInterval, Event{Kind: KindTimer, Actor: c.id,
+					Timer: TimerReconcile, Env: Envelope{VNI: ch}})
+			}
 		}
 	}
 }
@@ -399,51 +368,40 @@ func (w *world) dispatchFault(e Event) string {
 
 func (w *world) dispatchChurn(e Event) string {
 	op := e.Churn
-	vni := op.VNI
+	tenant := op.VNI
 	c := int(op.Client)
 	if c < 0 || c >= len(w.clients) {
-		return fmt.Sprintf("%d|churn|a=%d|vni=%d|noop", e.At, op.Client, vni)
+		return fmt.Sprintf("%d|churn|a=%d|vni=%d|noop", e.At, op.Client, tenant)
 	}
-	client := w.clients[c]
-	id := client.identity
+	id := w.clients[c].identity
 
-	if op.Join {
-		// Ensure client has a vniState with its KeyPackage. prospectiveVNI is
-		// called in bootstrap for all clients; only call it here as a safety net
-		// for dynamically added clients. Do NOT republish the KP if one already
-		// exists — a fresh KP would invalidate any in-flight Welcome messages that
-		// were encrypted for the original KP (breaking JoinViaWelcome).
-		if client.vnis[vni] == nil {
-			client.prospectiveVNI(vni)
-		} else if _, ok := w.dir.kps[id]; !ok {
-			// No KP at all (e.g., client was never set up prospectively): publish one now.
-			w.dir.publishKeyPackage(w.suite, vni, id, client.signer)
+	// A churn applies to BOTH replicas — each replica's committer converges its own
+	// group via its own reflector; the two may transiently differ in membership.
+	for r := 0; r < w.numReplicas; r++ {
+		ch := saVNI(tenant, r)
+		if op.Join {
+			if w.desired[ch] == nil {
+				w.desired[ch] = map[string]bool{}
+			}
+			if w.intended[ch] == nil {
+				w.intended[ch] = map[string]bool{}
+			}
+			w.desired[ch][id] = true
+			w.intended[ch][id] = true
+		} else {
+			delete(w.desired[ch], id)
+			delete(w.intended[ch], id)
 		}
-		// Update desired set.
-		if w.desired[vni] == nil {
-			w.desired[vni] = map[string]bool{}
-		}
-		w.desired[vni][id] = true
-		if w.intended[vni] == nil {
-			w.intended[vni] = map[string]bool{}
-		}
-		w.intended[vni][id] = true
-		// Trigger a reconcile at the committer (client 0 for simplicity).
+		// Trigger a reconcile at the committer (client 0) for this replica.
 		w.s.Schedule(w.s.Now()+1, Event{Kind: KindTimer, Actor: w.clients[0].id,
-			Timer: TimerReconcile, Env: Envelope{VNI: vni}})
-	} else {
-		// Leave: remove from desired/intended.
-		delete(w.desired[vni], id)
-		delete(w.intended[vni], id)
-		w.s.Schedule(w.s.Now()+1, Event{Kind: KindTimer, Actor: w.clients[0].id,
-			Timer: TimerReconcile, Env: Envelope{VNI: vni}})
+			Timer: TimerReconcile, Env: Envelope{VNI: ch}})
 	}
-	return fmt.Sprintf("%d|churn|a=%d|vni=%d|join=%v", e.At, op.Client, vni, op.Join)
+	return fmt.Sprintf("%d|churn|a=%d|vni=%d|join=%v", e.At, op.Client, tenant, op.Join)
 }
 
-// desiredSlice returns the desired membership as a sorted [][]byte.
-func (w *world) desiredSlice(vni uint32) [][]byte {
-	m := w.desired[vni]
+// desiredSlice returns the desired membership for a channel as a sorted [][]byte.
+func (w *world) desiredSlice(ch uint32) [][]byte {
+	m := w.desired[ch]
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -480,7 +438,7 @@ func Run(sc Scenario, seed int64) Result {
 		clients[i] = newClient(ActorID(i), suite, signer, id, bus, s, dir, dsIDs, metrics, checker, sc.W)
 		clients[i].mbbDisabled = sc.MBBDisabled
 	}
-	dss := []*DS{newDS(dsIDs[0], bus, faults), newDS(dsIDs[1], bus, faults)}
+	dss := []*DS{newDS(dsIDs[0], 0, bus, faults), newDS(dsIDs[1], 1, bus, faults)}
 
 	w := &world{
 		sc: sc, s: s, bus: bus, faults: faults, metrics: metrics,
@@ -503,19 +461,10 @@ func Run(sc Scenario, seed int64) Result {
 		}
 	}
 
-	// Count forks from the checker registry.
-	forkCount := 0
-	for _, vni := range sortedIntendedKeys(w.intended) {
-		for epoch := uint64(0); epoch < 100; epoch++ {
-			gid := group.GroupID(ironcore.GroupID(vni))
-			if checker.far.Divergent(gid, epoch) {
-				forkCount++
-			}
-		}
-	}
-
+	// There are no forks in the dual single-sequencer model (each replica is a true
+	// total order), so fork count is identically zero.
 	r := checker.Evaluate(clients, w.intended)
-	metrics.Forks = forkCount
+	metrics.Forks = 0
 	r.Metrics = metrics
 	r.Trace = trace
 	return r

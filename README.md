@@ -47,12 +47,20 @@ interop/    ← gRPC conformance harness (SEPARATE nested module; grpc+protobuf)
   server/            MLSClient service implementation
   proto/mlspb/       committed generated stubs (mls_client.{pb,_grpc.pb}.go)
   conformance_test.go  in-process 21-subtest self-conformance gate
+
+sim/        ← deterministic metalnet/metalbond simulation (root module, STDLIB-ONLY)
+  scheduler/event/bus  single-seeded discrete-event engine (no goroutines)
+  ds/client            reflector + metalnet-host actors driving the REAL ironcore stack
+  invariant/metrics    per-replica convergence, data-plane zero-loss, fan-out cost
+  scenario             the built-in fault scenarios + the negative control
+cmd/metalsim/   ← CLI runner for the simulation (-scenario all | <name> -seed N)
 ```
 
 | Layer | Module | Dependencies | Purpose |
 |---|---|---|---|
 | `mls/…` | `github.com/trevex/mls-mlkem-go` | **stdlib only** | The RFC 9420 MLS engine |
 | `ironcore`, `ironcore/sequencer` | same root module | **stdlib only** | IronCore per-VNI integration + ordering |
+| `sim`, `cmd/metalsim` | same root module | **stdlib only** | Deterministic metalnet/metalbond simulation |
 | `interop/…` | `github.com/trevex/mls-mlkem-go/interop` (nested, `replace ../`) | grpc + protobuf | Conformance harness only |
 
 **The zero-dependency rule.** The root module
@@ -114,6 +122,48 @@ nix develop .#e2e -c bash scripts/e2e-openmls.sh
 
 The X-Wing suite `0xF001` is **ours-only** and is not used against OpenMLS.
 
+## Simulation
+
+```sh
+make sim                                            # go test ./sim/... + the all-scenarios CLI smoke
+nix develop -c go run ./cmd/metalsim -scenario all  # run the 5-scenario property suite
+nix develop -c go run ./cmd/metalsim -scenario partition_recover -seed 7
+```
+
+[`sim/`](sim/) + [`cmd/metalsim/`](cmd/metalsim/) are a **deterministic
+discrete-event simulation** (single seeded RNG, no goroutines — reproducible by
+seed) that drives the **real** `ironcore`/`mls` library to model metalnet under
+faults: **two MetalBond reflectors + N metalnet hosts + M VNIs** under packet
+drops, reflector-down, and partition.
+
+The model is **dual-group pure redundancy**: each VNI runs **two independent MLS
+groups**, one per reflector, each ordered by that reflector's **own local
+accept-once register** (never shared — the two reflectors never coordinate); the
+data plane installs **both** replicas' ESP SAs and demuxes by SPI. The headline
+finding, validated across the 5 scenarios over seeds 1..20:
+
+> **dual-group redundancy ⇒ zero tenant data-plane packet loss when a reflector
+> is down or partitioned** — the other replica's SA carries traffic, so no rekey
+> or reflector failover ever makes a packet undecryptable.
+
+Because each group is serialized by a single local register, **no replica ever
+forks** (so `CanonicalCommit`/fork-resolution is off the path). The trade is
+~2× control-plane and SA state. Scenarios:
+
+| Scenario | What it stresses |
+|---|---|
+| `nominal` | churn, no faults — baseline convergence + fan-out cost |
+| `drops` | 20% per-delivery drops — log-replay catch-up |
+| `ds_down` | a reflector stops mid-run — **zero loss** on the surviving replica |
+| `partition_recover` | client subset cut from one reflector — **zero loss** via cross-replica failover |
+| `both_rekey` | concurrent rekeys in both replicas — make-before-break |
+
+A **negative control** (`-scenario negative_control`: single replica, no
+make-before-break) deliberately **fails** the zero-loss check, proving it has
+teeth. This is a deterministic *model* / property test — not a production
+deployment. See the design spec:
+[`docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md`](docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md).
+
 ## Developing
 
 See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** for the contributor guide:
@@ -159,7 +209,18 @@ guide).
 
 ## Design docs
 
-- Design spec, including the **§5 DS-ordering / failover correctness proof**:
-  [`docs/superpowers/specs/`](docs/superpowers/specs/).
+- MLS+IronCore design spec, including the **§5 DS-ordering / failover
+  correctness proof** (single-linearization-point, B1 fencing, fork detection):
+  [`docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md`](docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md).
+- Simulation design spec (dual-group pure redundancy):
+  [`docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md`](docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md).
 - Implementation roadmap (15 plans):
   [`docs/superpowers/plans/`](docs/superpowers/plans/).
+
+**Recommended metalbond ordering model.** The `ironcore/sequencer` B1
+fencing / fork-detection primitives assume a strongly-consistent lease store,
+which real metalbond (an independent route-reflector pair) does not have. The
+design §5 refinement and the simulation therefore recommend **dual-group
+redundancy** (validated above) — or **static-precedence local registers** — for
+metalbond as it actually is, **not** the leased CP store. The library code
+supports all three; metalbond selects the model.

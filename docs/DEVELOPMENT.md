@@ -45,6 +45,7 @@ wrapper: `make test NIX=`.
 | `make race` | IronCore layer under `-race` |
 | `make vet` / `make fmt` / `make fmt-check` | `go vet` / `gofmt -w` / gofmt lint |
 | `make conformance` | the gRPC interop gate (`cd interop && go test ./...`) |
+| `make sim` | the deterministic metalnet/metalbond simulation (`go test ./sim/...` + the all-scenarios CLI smoke) |
 | `make generate` | regenerate the interop proto stubs (needs `protoc`) |
 | `make check-zero-dep` | prove the root module is stdlib-only |
 | `make e2e-openmls` | the reproducible end-to-end test vs OpenMLS |
@@ -161,6 +162,29 @@ in the self-conformance gate.
 | Race | `make race` | IronCore concurrency (sequencer, controller) |
 | Conformance gate | `make conformance` | 21-subtest in-process gRPC self-conformance |
 | End-to-end | `make e2e-openmls` | cross-stack interop vs OpenMLS (suite 1) |
+| Simulation | `make sim` | deterministic metalnet/metalbond fault-injection property test |
+
+### The simulation gate in detail
+
+[`sim/`](../sim) + [`cmd/metalsim/`](../cmd/metalsim) drive the **real**
+`ironcore`/`mls` stack through a deterministic discrete-event model of metalnet
+(two MetalBond reflectors, N hosts, M VNIs) under drops / reflector-down /
+partition. The model is **dual-group pure redundancy** — each VNI runs two
+independent MLS groups, one per reflector — and the property under test is
+**zero tenant data-plane packet loss** when a reflector is down or partitioned
+(asserted across 5 scenarios over seeds 1..20, with a negative control that must
+fail). See
+[`docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md`](superpowers/specs/2026-06-28-metalnet-simulation-design.md).
+
+**Deterministic-simulation discipline.** The sim must replay byte-identically
+from `(scenario, seed)`. The hard rules: a **single seeded `*rand.Rand`** in the
+scheduler threads every fault/timing decision; **no goroutines or channels**;
+**no map-iteration-order dependence** (sort keys before iterating); and the
+`time` package is used **only to measure** crypto CPU, never to drive scheduling
+(logical time advances solely via scheduled events). The `TestDeterminism` gate
+replays a fault-heavy scenario at the same seed and asserts an **identical event
+trace + identical metrics**. When touching `sim/`, keep these invariants or the
+gate breaks.
 
 ### The e2e gate in detail
 
@@ -186,7 +210,10 @@ accordingly.
 
 ## Design & roadmap
 
-- **Design spec** — including the **§5 DS-ordering / failover correctness
-  proof** (the single-linearization-point argument, B1 fencing, fork
-  detection): [`docs/superpowers/specs/`](superpowers/specs/).
+- **MLS+IronCore design spec** — including the **§5 DS-ordering / failover
+  correctness proof** (the single-linearization-point argument, B1 fencing, fork
+  detection) and its 2026-06-28 metalbond refinement:
+  [`superpowers/specs/2026-06-26-mls-mlkem-go-design.md`](superpowers/specs/2026-06-26-mls-mlkem-go-design.md).
+- **Simulation design spec** (dual-group pure redundancy):
+  [`superpowers/specs/2026-06-28-metalnet-simulation-design.md`](superpowers/specs/2026-06-28-metalnet-simulation-design.md).
 - **Implementation plans** (15): [`docs/superpowers/plans/`](superpowers/plans/).

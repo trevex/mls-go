@@ -242,7 +242,11 @@ func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.Gr
 // be bound to WireFormatPrivateMessage (e.g. from SignCommit with that wire
 // format). This mirrors AssembleCommitPublic for the private wire format
 // (RFC 9420 §6.3).
+// reuseGuard must be a fresh uniformly random [4]byte per message (RFC 9420 §6.3.1).
 func AssembleCommitPrivate(suite cipher.Suite, st *keyschedule.SecretTree, senderDataSecret []byte, fc FramedContent, generation uint32, reuseGuard [4]byte, paddingSize int, signature, confTag []byte) (PrivateMessage, error) {
+	if fc.Sender.Type != SenderTypeMember {
+		return PrivateMessage{}, fmt.Errorf("framing: AssembleCommitPrivate requires a member sender, got %v", fc.Sender.Type)
+	}
 	auth := FramedContentAuthData{Signature: signature, ConfirmationTag: confTag}
 	return sealPrivate(suite, st, senderDataSecret, fc, auth, generation, reuseGuard, paddingSize)
 }

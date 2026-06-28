@@ -114,6 +114,10 @@ func TestSignCommitWireFormatBinding(t *testing.T) {
 		t.Fatalf("SignCommit(private): %v", err)
 	}
 
+	if len(pubInput) < 2 || len(privInput) < 2 {
+		t.Fatalf("confirmedInput too short: pub=%d priv=%d", len(pubInput), len(privInput))
+	}
+
 	// confirmedInput[0:2] is the 2-byte big-endian wire_format.
 	// Index 1 holds the low byte: 0x01 for PublicMessage, 0x02 for PrivateMessage.
 	if want := byte(WireFormatPublicMessage); pubInput[1] != want {

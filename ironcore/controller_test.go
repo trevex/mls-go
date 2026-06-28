@@ -155,6 +155,33 @@ func TestControllerScaffold(t *testing.T) {
 	}
 }
 
+// TestControllerNoGroupAccessors verifies the not-yet-joined (g==nil) accessor
+// guards: a joiner controller minted by mkNode has no group state yet.
+func TestControllerNoGroupAccessors(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctrl, _, _, _ := mkNode(t, suite, testVNI, "joiner", seq, nil)
+
+	if got := ctrl.Epoch(); got != 0 {
+		t.Errorf("no-group Epoch() = %d, want 0", got)
+	}
+	if ctrl.IsCommitter() {
+		t.Error("no-group IsCommitter() = true, want false")
+	}
+	if ctrl.Group() != nil {
+		t.Error("no-group Group() != nil")
+	}
+	if _, err := ctrl.CurrentSA(); !errors.Is(err, ironcore.ErrNoGroup) {
+		t.Errorf("no-group CurrentSA() err = %v, want ErrNoGroup", err)
+	}
+	if _, err := ctrl.PublishGroupInfo(); !errors.Is(err, ironcore.ErrNoGroup) {
+		t.Errorf("no-group PublishGroupInfo() err = %v, want ErrNoGroup", err)
+	}
+	if _, ok := ctrl.PreviousSA(); ok {
+		t.Error("no-group PreviousSA() ok = true, want false")
+	}
+}
+
 // ─── Task 3: HandleCommit + commitAndOrder ────────────────────────────────────
 
 // TestControllerHandleCommit verifies:

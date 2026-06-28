@@ -432,7 +432,7 @@ func (t *RatchetTree) GenerateUpdatePath(senderLeaf uint32, leafSecret []byte, s
 		nodes[k] = UpdatePathNode{EncryptionKey: nodePubs[k], EncryptedPathSecret: cts}
 	}
 
-	// Build per-node path secret map for Welcome construction (N5).
+	// Build per-node path secret map for Welcome construction.
 	pathSecretByNode := make(map[uint32][]byte, len(fdp))
 	for k, nodeIdx := range fdp {
 		pathSecretByNode[nodeIdx] = pathSecrets[k]

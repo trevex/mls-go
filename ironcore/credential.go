@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
 	"net/url"
@@ -47,7 +46,12 @@ func bindSignatureKey(leaf *x509.Certificate, sigPub []byte) error {
 			return fmt.Errorf("ironcore: cert public key does not match MLS signature key")
 		}
 	case *ecdsa.PublicKey:
-		if !bytes.Equal(elliptic.Marshal(pk.Curve, pk.X, pk.Y), sigPub) { //nolint:staticcheck — matches cipher.Suite.SignaturePublicKey
+		// ECDH().Bytes() yields the uncompressed SEC1 point (0x04‖X‖Y),
+		// byte-identical to the encoding cipher.Suite.SignaturePublicKey
+		// produces. An ECDH() error means an incompatible key: treat as
+		// mismatch.
+		ecdhPub, err := pk.ECDH()
+		if err != nil || !bytes.Equal(ecdhPub.Bytes(), sigPub) {
 			return fmt.Errorf("ironcore: cert public key does not match MLS signature key")
 		}
 	default:

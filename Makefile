@@ -15,7 +15,7 @@ NIX_E2E ?= nix develop .#e2e -c
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test kat race vet fmt fmt-check conformance generate check-zero-dep e2e-openmls sim clean
+.PHONY: help test kat race vet fmt fmt-check lint conformance generate check-zero-dep e2e-openmls sim clean
 
 help: ## List available targets
 	@echo "mls-mlkem-go — make targets (all run inside the Nix dev shell):"
@@ -48,6 +48,10 @@ fmt: ## Format all Go sources in place (gofmt -w)
 
 fmt-check: ## Fail if any Go source is not gofmt-clean
 	$(NIX) bash -c 'out=$$(gofmt -l mls ironcore sim cmd interop); if [ -n "$$out" ]; then echo "not gofmt-clean:"; echo "$$out"; exit 1; fi'
+
+lint: ## Run golangci-lint (root + interop are separate modules, so two invocations)
+	$(NIX) golangci-lint run ./...
+	$(NIX) bash -c 'cd interop && golangci-lint run ./...'
 
 conformance: ## Run the gRPC interop conformance gate (interop module)
 	$(NIX) bash -c 'cd interop && go test ./...'

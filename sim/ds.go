@@ -99,8 +99,3 @@ func (d *DS) serveCatchup(env Envelope, m *Metrics) {
 	d.bus.Publish(Envelope{VNI: env.VNI, Type: MsgLogReply, Src: d.id, Dst: env.Src, Records: recs})
 	m.LogRetransmits++
 }
-
-// restart re-enables a downed reflector; its register/log persist across the
-// outage (the same in-process actor), so on return it simply resumes serializing
-// + serving catch-up and the stalled replica advances again.
-func (d *DS) restart() {}

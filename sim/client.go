@@ -363,7 +363,7 @@ func (c *Client) sendCommit(ch uint32, base uint64, msg []byte) {
 		Payload: msg,
 		Hash:    contentHash(msg),
 	})
-	c.metrics.commitFanout(ch, len(msg), 1)
+	c.metrics.commitFanout(len(msg), 1)
 }
 
 func (c *Client) sendWelcome(ch uint32, welcome []byte, added [][]byte) {

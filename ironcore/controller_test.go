@@ -120,16 +120,6 @@ func assertControllerConverged(t *testing.T, tag string, ctrls ...*ironcore.Cont
 	}
 }
 
-// broadcast calls HandleCommit on all controllers in the list.
-func broadcast(t *testing.T, commitMsg []byte, ctrls ...*ironcore.Controller) {
-	t.Helper()
-	for i, c := range ctrls {
-		if err := c.HandleCommit(commitMsg); err != nil {
-			t.Fatalf("broadcast: ctrl[%d].HandleCommit: %v", i, err)
-		}
-	}
-}
-
 // ─── Task 2: Controller scaffold ─────────────────────────────────────────────
 
 // TestControllerScaffold verifies that a 1-member founder Controller:
@@ -162,6 +152,33 @@ func TestControllerScaffold(t *testing.T) {
 	}
 	if ctrl.Group() == nil {
 		t.Fatal("founder: Group() should not be nil")
+	}
+}
+
+// TestControllerNoGroupAccessors verifies the not-yet-joined (g==nil) accessor
+// guards: a joiner controller minted by mkNode has no group state yet.
+func TestControllerNoGroupAccessors(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctrl, _, _, _ := mkNode(t, suite, testVNI, "joiner", seq, nil)
+
+	if got := ctrl.Epoch(); got != 0 {
+		t.Errorf("no-group Epoch() = %d, want 0", got)
+	}
+	if ctrl.IsCommitter() {
+		t.Error("no-group IsCommitter() = true, want false")
+	}
+	if ctrl.Group() != nil {
+		t.Error("no-group Group() != nil")
+	}
+	if _, err := ctrl.CurrentSA(); !errors.Is(err, ironcore.ErrNoGroup) {
+		t.Errorf("no-group CurrentSA() err = %v, want ErrNoGroup", err)
+	}
+	if _, err := ctrl.PublishGroupInfo(); !errors.Is(err, ironcore.ErrNoGroup) {
+		t.Errorf("no-group PublishGroupInfo() err = %v, want ErrNoGroup", err)
+	}
+	if _, ok := ctrl.PreviousSA(); ok {
+		t.Error("no-group PreviousSA() ok = true, want false")
 	}
 }
 

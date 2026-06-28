@@ -1,5 +1,5 @@
 // Package group implements the RFC 9420 §10/§12 protocol objects (KeyPackage,
-// Proposal, Commit, GroupInfo, Welcome) and (Plan 8b) the group state machine.
+// Proposal, Commit, GroupInfo, Welcome) and the group state machine.
 package group
 
 import (

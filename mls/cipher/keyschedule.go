@@ -21,7 +21,7 @@ func (s Suite) AEADKeySize() int {
 	switch s.aead.ID() {
 	case 0x0001: // AES-128-GCM
 		return 16
-	case 0x0002, 0x0003: // AES-256-GCM, ChaCha20Poly1305
+	case 0x0002: // AES-256-GCM
 		return 32
 	default:
 		panic(fmt.Sprintf("cipher: unknown AEAD id %#x", s.aead.ID()))
@@ -32,7 +32,7 @@ func (s Suite) AEADKeySize() int {
 // Every AEAD used by an MLS cipher suite uses a 12-byte nonce.
 func (s Suite) AEADNonceSize() int {
 	switch s.aead.ID() {
-	case 0x0001, 0x0002, 0x0003:
+	case 0x0001, 0x0002:
 		return 12
 	default:
 		panic(fmt.Sprintf("cipher: unknown AEAD id %#x", s.aead.ID()))

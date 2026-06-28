@@ -73,7 +73,7 @@ func levelOf(x uint32) uint32 {
 }
 
 // commonAncestor returns the lowest common ancestor of x and y in a tree of
-// nLeaves leaves (N4 algorithm from the plan).
+// nLeaves leaves.
 func commonAncestor(x, y, nLeaves uint32) uint32 {
 	for levelOf(x) < levelOf(y) {
 		x, _ = tree.Parent(x, nLeaves)
@@ -89,7 +89,7 @@ func commonAncestor(x, y, nLeaves uint32) uint32 {
 }
 
 // installJoinerPriv installs pathSecret and its ratcheted ancestors into priv,
-// starting at the common ancestor of 2*ownLeaf and 2*senderLeaf (RFC 9420 §12.4.3.1 / N4).
+// starting at the common ancestor of 2*ownLeaf and 2*senderLeaf (RFC 9420 §12.4.3.1).
 func installJoinerPriv(suite cipher.Suite, priv *tree.TreeKEMPrivate, pathSecret []byte, ownLeaf, senderLeaf, nLeaves uint32) error {
 	node := commonAncestor(2*ownLeaf, 2*senderLeaf, nLeaves)
 	root := tree.Root(nLeaves)

@@ -10,7 +10,7 @@ import (
 )
 
 // buildWelcome constructs a Welcome MLSMessage for the newly-added members
-// (RFC 9420 §12.4.3.1 / N5).
+// (RFC 9420 §12.4.3.1).
 //
 // Parameters:
 //   - es: the new epoch's EpochSecrets (after DeriveEpochSecrets for epoch n+1).

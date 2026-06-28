@@ -18,11 +18,12 @@ var xWingLabel = []byte{0x5c, 0x2e, 0x2f, 0x2f, 0x5e, 0x5c}
 // xwingCombiner = SHA3-256(ss_M || ss_X || ct_X || pk_X || XWingLabel).
 func xwingCombiner(ssM, ssX, ctX, pkX []byte) []byte {
 	h := sha3.New256()
-	h.Write(ssM)
-	h.Write(ssX)
-	h.Write(ctX)
-	h.Write(pkX)
-	h.Write(xWingLabel)
+	// hash.Hash.Write never returns a non-nil error per its contract.
+	_, _ = h.Write(ssM)
+	_, _ = h.Write(ssX)
+	_, _ = h.Write(ctX)
+	_, _ = h.Write(pkX)
+	_, _ = h.Write(xWingLabel)
 	return h.Sum(nil)
 }
 

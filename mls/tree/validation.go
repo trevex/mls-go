@@ -3,6 +3,7 @@ package tree
 import (
 	"bytes"
 	"fmt"
+	"maps"
 
 	"github.com/trevex/mls-mlkem-go/mls/syntax"
 )
@@ -93,23 +94,11 @@ func (t *RatchetTree) hasParentHashMatch(pi, ci, si uint32) (bool, error) {
 				actual[x] = true
 			}
 		}
-		if mapsEqual(actual, expected) {
+		if maps.Equal(actual, expected) {
 			return true, nil
 		}
 	}
 	return false, nil
-}
-
-func mapsEqual(a, b map[uint32]bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k := range a {
-		if !b[k] {
-			return false
-		}
-	}
-	return true
 }
 
 // VerifyParentHashes checks that every non-blank parent node is parent-hash

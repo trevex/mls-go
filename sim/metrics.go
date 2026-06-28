@@ -19,9 +19,6 @@ type Metrics struct {
 	CatchupRequests int
 	LogRetransmits  int
 	CommitRejected  int // commits dropped by a reflector's local register (dedup / loser)
-	Recoveries      int
-	LostRekeys      int
-	Forks           int
 	CommitResends   int // committer resends of an unconfirmed head commit (drop recovery)
 	DataSent        int
 	DataDecryptable int
@@ -43,8 +40,7 @@ func (m *Metrics) cpu(op string, d time.Duration) {
 	m.cpuCount[op]++
 }
 
-func (m *Metrics) commitFanout(vni uint32, size, nDS int) {
-	_ = vni
+func (m *Metrics) commitFanout(size, nDS int) {
 	m.CommitMsgs += nDS // each replica peers a single reflector (nDS=1 per call)
 	m.CommitBytes += size * nDS
 }
@@ -65,30 +61,28 @@ func (m *Metrics) observeSendLag(lag uint64) {
 func (m *Metrics) Report() string {
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(w, "metric\tvalue\n")
-	fmt.Fprintf(w, "delivered\t%d\n", m.Delivered)
-	fmt.Fprintf(w, "ctrl-dropped\t%d\n", m.CtrlDropped)
-	fmt.Fprintf(w, "data-sent\t%d\n", m.DataSent)
-	fmt.Fprintf(w, "data-decryptable\t%d\n", m.DataDecryptable)
-	fmt.Fprintf(w, "data-dropped(transport)\t%d\n", m.DataDropped)
-	fmt.Fprintf(w, "forks\t%d\n", m.Forks)
-	fmt.Fprintf(w, "recoveries\t%d\n", m.Recoveries)
-	fmt.Fprintf(w, "lost-rekeys\t%d\n", m.LostRekeys)
-	fmt.Fprintf(w, "catchup-requests\t%d\n", m.CatchupRequests)
-	fmt.Fprintf(w, "log-retransmits\t%d\n", m.LogRetransmits)
-	fmt.Fprintf(w, "commit-msgs(fanout)\t%d\n", m.CommitMsgs)
-	fmt.Fprintf(w, "commit-bytes(fanout)\t%d\n", m.CommitBytes)
-	fmt.Fprintf(w, "max-SA-overlap(W+1)\t%d\n", m.MaxOverlap)
-	fmt.Fprintf(w, "max-send-lag\t%d\n", m.MaxSendLag)
+	// Writes to an in-memory tabwriter never fail; ignore the errors.
+	_, _ = fmt.Fprintf(w, "metric\tvalue\n")
+	_, _ = fmt.Fprintf(w, "delivered\t%d\n", m.Delivered)
+	_, _ = fmt.Fprintf(w, "ctrl-dropped\t%d\n", m.CtrlDropped)
+	_, _ = fmt.Fprintf(w, "data-sent\t%d\n", m.DataSent)
+	_, _ = fmt.Fprintf(w, "data-decryptable\t%d\n", m.DataDecryptable)
+	_, _ = fmt.Fprintf(w, "data-dropped(transport)\t%d\n", m.DataDropped)
+	_, _ = fmt.Fprintf(w, "catchup-requests\t%d\n", m.CatchupRequests)
+	_, _ = fmt.Fprintf(w, "log-retransmits\t%d\n", m.LogRetransmits)
+	_, _ = fmt.Fprintf(w, "commit-msgs(fanout)\t%d\n", m.CommitMsgs)
+	_, _ = fmt.Fprintf(w, "commit-bytes(fanout)\t%d\n", m.CommitBytes)
+	_, _ = fmt.Fprintf(w, "max-SA-overlap(W+1)\t%d\n", m.MaxOverlap)
+	_, _ = fmt.Fprintf(w, "max-send-lag\t%d\n", m.MaxSendLag)
 	for _, op := range sortedStr(m.cpuCount) {
 		n := m.cpuCount[op]
 		avg := time.Duration(0)
 		if n > 0 {
 			avg = time.Duration(m.cpuNanos[op] / n)
 		}
-		fmt.Fprintf(w, "cpu/%s (n=%d)\t%s\n", op, n, avg)
+		_, _ = fmt.Fprintf(w, "cpu/%s (n=%d)\t%s\n", op, n, avg)
 	}
-	w.Flush()
+	_ = w.Flush()
 	return b.String()
 }
 

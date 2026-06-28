@@ -13,8 +13,6 @@ func TestMetricsTextReport(t *testing.T) {
 	m.CtrlDropped = 3
 	m.DataSent = 10
 	m.DataDecryptable = 10
-	m.Forks = 2
-	m.Recoveries = 2
 	m.cpu("Rekey", 500*time.Microsecond)
 	m.cpu("Rekey", 300*time.Microsecond)
 
@@ -39,7 +37,6 @@ func TestMetricsTextReport(t *testing.T) {
 func TestMetricsJSON(t *testing.T) {
 	m := newMetrics()
 	m.Delivered = 7
-	m.Forks = 1
 	m.cpu("HandleCommit", time.Millisecond)
 
 	b, err := m.ReportJSON()

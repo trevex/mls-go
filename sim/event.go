@@ -14,7 +14,6 @@ type MsgType int
 const (
 	MsgCommit     MsgType = iota // real MLS commit bytes (member or external)
 	MsgWelcome                   // real MLS Welcome bytes (joiner)
-	MsgGroupInfo                 // real signed GroupInfo bytes (recovery/external join)
 	MsgHeartbeat                 // {epoch} liveness beacon (drives min-epoch sender-lag)
 	MsgLogRequest                // catch-up request {fromEpoch}
 	MsgLogReply                  // catch-up reply (carries commit records)
@@ -27,8 +26,6 @@ func (m MsgType) String() string {
 		return "commit"
 	case MsgWelcome:
 		return "welcome"
-	case MsgGroupInfo:
-		return "groupInfo"
 	case MsgHeartbeat:
 		return "heartbeat"
 	case MsgLogRequest:
@@ -81,7 +78,6 @@ const (
 	TimerHeartbeat                  // client emits a heartbeat
 	TimerReconcile                  // committer reconciles desired vs current
 	TimerData                       // a tenant data packet is generated
-	TimerDSRestart                  // a downed DS restarts
 )
 
 // faultKind distinguishes fault types (detail in fault.go).

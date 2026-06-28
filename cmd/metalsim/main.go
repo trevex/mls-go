@@ -148,17 +148,17 @@ func runAll(clients, vnis int, seed int64, rounds uint64, drop float64, jsonOutp
 		fmt.Printf("%s\n", b)
 	} else {
 		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(w, "scenario\tstatus\tpkt-loss\tcommit-msgs\tcommit-bytes\tdata-decryptable\tmax-overlap\tmax-send-lag")
+		_, _ = fmt.Fprintln(w, "scenario\tstatus\tpkt-loss\tcommit-msgs\tcommit-bytes\tdata-decryptable\tmax-overlap\tmax-send-lag")
 		for _, row := range rows {
 			status := "PASS"
 			if !row.Pass {
 				status = "FAIL"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
 				row.Scenario, status, row.PacketLoss, row.CommitMsgs, row.CommitBytes,
 				row.DataDecrypt, row.MaxOverlap, row.MaxSendLag)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 
 	if allPass {

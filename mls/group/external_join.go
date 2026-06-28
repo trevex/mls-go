@@ -62,7 +62,7 @@ func (g *Group) ProcessExternalCommit(commit []byte) error {
 // parsed MLSMessage so both ProcessExternalCommit and ProcessCommit's dispatch
 // share the same code path.
 func (g *Group) processExternalCommit(m framing.MLSMessage) error {
-	// N4 step 1: Basic wire-format and sender-type checks.
+	// step 1: Basic wire-format and sender-type checks.
 	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
 		return fmt.Errorf("group: processExternalCommit: not a PublicMessage")
 	}
@@ -146,7 +146,7 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 		return fmt.Errorf("group: processExternalCommit: SplitAuthenticatedContent: %w", err)
 	}
 
-	// N4 step 2: Derive the external-init secret from the ExternalInit proposal's
+	// step 2: Derive the external-init secret from the ExternalInit proposal's
 	// kem_output using this epoch's external_priv.
 	extPriv, _, err := keyschedule.ExternalPub(g.suite, g.epoch.ExternalSecret)
 	if err != nil {
@@ -158,7 +158,7 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 		return fmt.Errorf("group: processExternalCommit: ExternalInitDecap: %w", err)
 	}
 
-	// N4 step 3: Build working tree — apply Remove (if any), then AddLeaf.
+	// step 3: Build working tree — apply Remove (if any), then AddLeaf.
 	// Both sides independently agree on liC via deterministic leftmost-blank-or-append
 	// (after the same Remove), so the joiner and receivers place the new leaf at the
 	// same index without communicating it.
@@ -193,7 +193,7 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 		return fmt.Errorf("group: processExternalCommit: joiner leaf signature invalid (§7.3)")
 	}
 
-	// N4 step 4: Compute post-path tree hash (clone + Merge) for the two-GroupContext
+	// step 4: Compute post-path tree hash (clone + Merge) for the two-GroupContext
 	// rule. encGC uses the OLD confirmed_transcript_hash for HPKE context.
 	ct, err := wt.Clone()
 	if err != nil {
@@ -246,11 +246,11 @@ func (g *Group) processExternalCommit(m framing.MLSMessage) error {
 		return fmt.Errorf("group: processExternalCommit: parent hash verification failed (§7.9.2)")
 	}
 
-	// N4 step 5: Confirmed transcript hash (uses g.interim, the receiver's current
+	// step 5: Confirmed transcript hash (uses g.interim, the receiver's current
 	// interim hash = InterimTranscriptHash(confirmed_n, confTag_n)).
 	confirmed := keyschedule.ConfirmedTranscriptHash(g.suite, g.interim, confirmedInput)
 
-	// N4 step 6: Advance key schedule with the external-init secret as init_secret.
+	// step 6: Advance key schedule with the external-init secret as init_secret.
 	newGC := keyschedule.GroupContext{
 		Version:                 g.groupContext.Version,
 		CipherSuite:             g.groupContext.CipherSuite,

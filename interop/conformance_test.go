@@ -38,7 +38,7 @@ func dial(t *testing.T) (pb.MLSClientClient, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pb.NewMLSClientClient(conn), func() { conn.Close(); srv.Stop() }
+	return pb.NewMLSClientClient(conn), func() { _ = conn.Close(); srv.Stop() }
 }
 
 // assertStateAuth asserts that all supplied state IDs have the same epoch

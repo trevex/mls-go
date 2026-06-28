@@ -120,9 +120,10 @@ protoc --proto_path=proto \
 
 ## Known limitations
 
-- **`encrypt_handshake = true`** is rejected (`Unimplemented`): the engine
-  frames handshake messages as `PublicMessage`.  Application data
-  (`Protect`/`Unprotect`) is always `PrivateMessage`.
+- **`encrypt_handshake = true`** is supported: member Commit/Proposal/Update
+  messages are framed as `PrivateMessage` (AEAD-encrypted for the delivery
+  service). External-commit joins and recovery remain `PublicMessage` (RFC 9420).
+  Application data (`Protect`/`Unprotect`) is always `PrivateMessage`.
 - **By-reference Add proposals** (via `AddProposal` RPC) do not generate a
   Welcome when committed.  Welcome-producing Adds must go through
   `Commit.by_value`.  The official test runner's welcome scenarios use

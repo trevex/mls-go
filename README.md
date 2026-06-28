@@ -7,7 +7,7 @@ exchange.**
 | | |
 |---|---|
 | **Conformance** | 15 official MLS Known-Answer Tests pass (RFC 9420 vectors) |
-| **Interop** | Validated against **OpenMLS** on suite 1 (PublicMessage) via the official mlswg test-runner |
+| **Interop** | Validated against **OpenMLS** on suite 1 (PublicMessage + PrivateMessage) via the official mlswg test-runner |
 | **Gate** | 21-subtest gRPC self-conformance gate (suites 0x0001, 0x0002, 0xF001) |
 | **Dependencies** | Root module is **stdlib-only** — zero third-party Go deps |
 | **Toolchain** | Go via Nix (`nix develop`); `GOTOOLCHAIN=local` |
@@ -110,7 +110,9 @@ make e2e-openmls       # clone + build OpenMLS and the mlswg runner, run interop
 This builds OpenMLS's `interop_client` (Rust) and the official mlswg
 `test-runner`, starts our gRPC server alongside OpenMLS, and runs a set of
 known-interoperable scenarios on **suite 1**
-(`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`) with PublicMessage handshakes.
+(`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`). The gate runs **two passes**:
+a PublicMessage-handshake pass and an encrypted (PrivateMessage) handshake pass,
+so both framing modes are cross-stack validated.
 It is reproducible from a clean checkout (clone-if-absent, idempotent rebuilds)
 and exits 0 only if every scenario passes across all role assignments. It
 requires the Rust toolchain, so `make e2e-openmls` runs it in the `e2e` Nix
@@ -185,15 +187,18 @@ layering.
 
 - Full RFC 9420 group lifecycle: create, Add / Update / Remove proposals,
   Commit (by-value and by-reference), Welcome/join, external-commit join.
-- **PublicMessage** handshake framing; application data via PrivateMessage
-  (`Protect`/`Unprotect`).
+- **PublicMessage** handshake framing (library default); application data via
+  PrivateMessage (`Protect`/`Unprotect`).
+- **PrivateMessage handshake framing** (`encrypt_handshake`): member
+  Commit/Proposal/Update can be AEAD-encrypted so an untrusted delivery service
+  (e.g. a metalbond reflector) sees only ciphertext. External-commit joins /
+  recovery remain PublicMessage (RFC 9420). ironcore enables it per VNI via
+  `HandshakePrivacy` (default Encrypted); the library default stays PublicMessage.
 - All 15 official MLS KAT categories.
 
 **Not yet implemented** (the harness reports `Unimplemented`/rejects these)
 
 - **PSK** proposals (`StorePSK`, external & resumption PSK).
-- **PrivateMessage** handshake framing (`encrypt_handshake = true` is rejected;
-  handshakes are framed as PublicMessage).
 - **Prior-epoch application-message decryption window** (out-of-order
   Unprotect *across* epochs).
 - **ReInit**, **Branch**, **external-signer**, `NewMemberAddProposal`,

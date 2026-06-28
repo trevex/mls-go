@@ -212,9 +212,12 @@ func TestForkResolveSingleLoser(t *testing.T) {
 	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 10)
 
 	// Build a 3-member group (A = committer, B, C).
-	sigA := makeSigner(); dir.register("A", sigA)
-	sigB := makeSigner(); dir.register("B", sigB)
-	sigC := makeSigner(); dir.register("C", sigC)
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	sigB := makeSigner()
+	dir.register("B", sigB)
+	sigC := makeSigner()
+	dir.register("C", sigC)
 
 	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
 	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)
@@ -435,7 +438,8 @@ func TestSACacheRetainsW(t *testing.T) {
 // epoch and all peer epochs seen via heartbeats.
 func TestSendEpochIsMin(t *testing.T) {
 	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 21)
-	_ = ds0; _ = ds1
+	_ = ds0
+	_ = ds1
 
 	sigA := makeSigner()
 	dir.register("A", sigA)
@@ -486,7 +490,9 @@ func TestSendEpochIsMin(t *testing.T) {
 		t.Fatalf("sendEpoch after removing peer at 1: want 2, got %d", got)
 	}
 
-	_ = b; _ = m; _ = checker
+	_ = b
+	_ = m
+	_ = checker
 }
 
 // TestDataDecryptableUnderLag: packets sent at the group min-epoch are
@@ -495,8 +501,10 @@ func TestSendEpochIsMin(t *testing.T) {
 func TestDataDecryptableUnderLag(t *testing.T) {
 	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 22)
 
-	sigA := makeSigner(); dir.register("A", sigA)
-	sigB := makeSigner(); dir.register("B", sigB)
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	sigB := makeSigner()
+	dir.register("B", sigB)
 
 	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
 	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)

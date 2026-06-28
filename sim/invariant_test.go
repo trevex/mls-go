@@ -8,8 +8,10 @@ import (
 
 func TestInvariantConvergencePass(t *testing.T) {
 	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 100)
-	sigA := makeSigner(); dir.register("A", sigA)
-	sigB := makeSigner(); dir.register("B", sigB)
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	sigB := makeSigner()
+	dir.register("B", sigB)
 	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
 	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)
 	cA.foundVNI(100)
@@ -64,8 +66,10 @@ func TestInvariantPacketLossCaught(t *testing.T) {
 
 func TestInvariantMembership(t *testing.T) {
 	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 103)
-	sigA := makeSigner(); dir.register("A", sigA)
-	sigB := makeSigner(); dir.register("B", sigB)
+	sigA := makeSigner()
+	dir.register("A", sigA)
+	sigB := makeSigner()
+	dir.register("B", sigB)
 	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
 	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)
 	cA.foundVNI(400)

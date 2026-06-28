@@ -23,22 +23,30 @@ func (optimisticOrdering) AcceptCommit(_ context.Context, _ group.GroupID, _ uin
 type vniState struct {
 	ctrl      *ironcore.Controller
 	joined    bool
+	joinEpoch uint64                 // epoch when this client joined this VNI
 	seen      map[string][][]byte    // vniKey(vni,base) -> competing commit refs
 	giByRef   map[string][]byte      // ref(hash) -> GroupInfo bytes (for recovery)
 	applied   map[uint64][]byte      // base -> the ref this client applied at base
 	recovered map[uint64]bool        // base -> already recovered
 	saCache   map[uint64]ironcore.SA // epoch -> SA (derive-time cache; never re-derive)
 	peerEpoch map[ActorID]uint64     // last heartbeat epoch per co-VNI member
+	// catchupReqs tracks how many requestCatchup calls we've made from each
+	// base epoch without making any log-replay progress. The external-commit
+	// fallback (recoverViaLatestGI) is only triggered after ≥ 2 failed rounds
+	// so that normal jitter in Nominal (log request races the commit to the DS)
+	// never creates spurious external commits.
+	catchupReqs map[uint64]int
 }
 
 func newVNIState() *vniState {
 	return &vniState{
-		seen:      map[string][][]byte{},
-		giByRef:   map[string][]byte{},
-		applied:   map[uint64][]byte{},
-		recovered: map[uint64]bool{},
-		saCache:   map[uint64]ironcore.SA{},
-		peerEpoch: map[ActorID]uint64{},
+		seen:        map[string][][]byte{},
+		giByRef:     map[string][]byte{},
+		applied:     map[uint64][]byte{},
+		recovered:   map[uint64]bool{},
+		saCache:     map[uint64]ironcore.SA{},
+		peerEpoch:   map[ActorID]uint64{},
+		catchupReqs: map[uint64]int{},
 	}
 }
 
@@ -80,6 +88,7 @@ func (c *Client) foundVNI(vni uint32) {
 		panic(err)
 	}
 	st.ctrl, st.joined = ctrl, true
+	st.joinEpoch = 0 // founder is in the group from epoch 0
 	c.vnis[vni] = st
 	c.bus.Subscribe(vni, c.id)
 	c.cacheCurrentSA(vni)
@@ -221,8 +230,15 @@ func (c *Client) onWelcome(env Envelope) {
 		return // Welcome not addressed to our epoch / superseded; will catch up
 	}
 	st.joined = true
+	st.joinEpoch = st.ctrl.Epoch()
 	c.cacheCurrentSA(env.VNI)
 	c.reportAuth(env.VNI)
+	// Immediately announce our join epoch to all peers so that senders update
+	// their peerEpoch and do not use a sendEpoch below our join epoch. Without
+	// this, the periodic heartbeat timer may not fire until several ticks after
+	// joining, leaving a window where a sender uses a stale (lower) sendEpoch
+	// that we cannot decrypt.
+	c.emitHeartbeat(env.VNI)
 }
 
 // onHeartbeat updates peer epoch tracking and triggers catch-up if behind.
@@ -238,6 +254,9 @@ func (c *Client) onHeartbeat(env Envelope) {
 }
 
 func (c *Client) requestCatchup(vni uint32, from uint64) {
+	if st := c.vnis[vni]; st != nil {
+		st.catchupReqs[from]++
+	}
 	c.toDS(Envelope{VNI: vni, Type: MsgLogRequest, Base: from})
 	c.metrics.CatchupRequests++
 }
@@ -249,6 +268,7 @@ func (c *Client) onLogReply(env Envelope) {
 	}
 	recs := append([]CommitRecord(nil), env.Records...)
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Base < recs[j].Base })
+	progressed := false
 	for _, r := range recs {
 		if st.ctrl.Epoch() != r.Base {
 			continue
@@ -259,11 +279,21 @@ func (c *Client) onLogReply(env Envelope) {
 			st.applied[r.Base] = []byte(r.Hash)
 			c.cacheCurrentSA(env.VNI)
 			c.reportAuth(env.VNI)
+			progressed = true
 		}
 	}
-	// fallback: still behind and no usable log ⇒ external-commit recovery
-	if hb := c.maxPeerEpoch(env.VNI); hb > st.ctrl.Epoch() {
-		c.recoverViaLatestGI(env.VNI)
+	// Fallback: only jump via external-commit after ≥ 2 catch-up request rounds
+	// with no progress. A single zero-progress reply is normal when the log
+	// request races the commit to the DS (jitter in Nominal can cause this).
+	// Requiring 2 rounds ensures the commit has had time to reach the DS before
+	// we resort to an external commit, which would create a competing branch.
+	if !progressed {
+		curEpoch := st.ctrl.Epoch()
+		if st.catchupReqs[curEpoch] >= 2 {
+			if hb := c.maxPeerEpoch(env.VNI); hb > curEpoch {
+				c.recoverViaLatestGI(env.VNI)
+			}
+		}
 	}
 }
 
@@ -382,33 +412,56 @@ func (c *Client) forkResolve(vni uint32, base uint64) {
 }
 
 // recoverViaLatestGI is the catch-up fallback (partition / no usable log).
+// It picks the highest-epoch cached GroupInfo and uses ctrl.AutoRecover to
+// properly update the controller state (direct RecoverViaExternalCommit would
+// update the VNIGroup but not the controller's internal group pointer).
 func (c *Client) recoverViaLatestGI(vni uint32) {
 	st := c.vnis[vni]
-	// pick any cached GroupInfo whose epoch > ours as the recovery target
-	var best []byte
+	if len(st.giByRef) == 0 {
+		return
+	}
+	// Find the GroupInfo with the highest epoch so we jump to the latest state.
+	var bestRef string
+	var bestEpoch uint64
+	hasAny := false
 	for _, ref := range sortedRefKeys(st.giByRef) {
-		best = st.giByRef[ref]
+		var gi group.GroupInfo
+		if gi.UnmarshalMLS(st.giByRef[ref]) != nil {
+			continue
+		}
+		if !hasAny || gi.GroupContext.Epoch > bestEpoch {
+			bestRef = ref
+			bestEpoch = gi.GroupContext.Epoch
+			hasAny = true
+		}
 	}
-	if best == nil {
+	if !hasAny || bestEpoch < st.ctrl.Epoch() {
 		return
 	}
-	var gi group.GroupInfo
-	if gi.UnmarshalMLS(best) != nil {
-		return
+	fetchGI := func(ref group.CommitRef) (*group.GroupInfo, error) {
+		gb := st.giByRef[string(ref)]
+		if gb == nil {
+			return nil, errNoGI
+		}
+		var gi group.GroupInfo
+		if err := gi.UnmarshalMLS(gb); err != nil {
+			return nil, err
+		}
+		return &gi, nil
 	}
-	vg := ironcore.NewVNIGroup(vni, st.ctrl.Group())
-	refs := []group.CommitRef{group.CommitRef(c.suite.Hash(best))}
-	st.giByRef[string(refs[0])] = best
-	fetchGI := func(group.CommitRef) (*group.GroupInfo, error) { return &gi, nil }
-	recMsg, err := ironcore.RecoverViaExternalCommit(ctx(), vg, c.suite, refs, fetchGI,
-		optimisticOrdering{}, c.dir.cred(c.identity), c.signer, maxLifetime())
+	refs := []group.CommitRef{group.CommitRef(bestRef)}
+	t0 := time.Now()
+	recMsg, err := st.ctrl.AutoRecover(ctx(), refs, fetchGI)
+	c.metrics.cpu("AutoRecover", time.Since(t0))
 	if err != nil {
 		return
 	}
 	c.cacheCurrentSA(vni)
 	c.reportAuth(vni)
 	c.metrics.Recoveries++
-	c.broadcastCommit(vni, st.ctrl.Epoch()-1, true, recMsg)
+	newBase := st.ctrl.Epoch() - 1
+	st.applied[newBase] = []byte(contentHash(recMsg))
+	c.broadcastCommit(vni, newBase, true, recMsg)
 }
 
 // ─── Task 8: data-plane SA cache + sender-lag ────────────────────────────────
@@ -501,6 +554,12 @@ func (c *Client) onData(env Envelope) {
 	st := c.vnis[env.VNI]
 	if st == nil || !st.joined {
 		return // not a live member of this VNI ⇒ packet is not "for" us
+	}
+	// Packets sent before this member joined the group are not the receiver's
+	// SA responsibility: the receiver never held the key for pre-join epochs.
+	// Forward secrecy is intentional; this is not a key-loss failure.
+	if env.Base < st.joinEpoch {
+		return
 	}
 	for _, e := range sortedEpochs(st.saCache) {
 		if st.saCache[e].SPI == env.SPI {

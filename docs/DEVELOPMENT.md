@@ -194,8 +194,9 @@ into a workdir (`./.e2e` by default, gitignored; override with `E2E_WORKDIR`,
 force rebuilds with `E2E_REBUILD=1`), builds the runner (it protoc-generates the
 runner's proto, bumps gRPC to a `SupportPackageIsVersion9`-capable release, and
 `go mod tidy`s), builds OpenMLS's `interop_client` (cargo release), builds our
-server, starts both on free ports, and runs the scenarios on suite 1 with
-PublicMessage handshakes — exiting 0 only if every role assignment passes.
+server, starts both on free ports, and runs two passes on suite 1: a
+PublicMessage-handshake pass and an encrypted (PrivateMessage) handshake pass —
+exiting 0 only if every role assignment passes in both.
 
 The scenario configs in [`scripts/e2e-configs/`](../scripts/e2e-configs) are
 curated to the subset both stacks support on suite 1. They are faithful subsets

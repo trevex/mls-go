@@ -121,9 +121,6 @@ func (s *Server) SupportedCiphersuites(_ context.Context, _ *pb.SupportedCiphers
 }
 
 func (s *Server) CreateGroup(_ context.Context, req *pb.CreateGroupRequest) (*pb.CreateGroupResponse, error) {
-	if req.EncryptHandshake {
-		return nil, status.Error(codes.Unimplemented, "encrypted (PrivateMessage) handshake not supported")
-	}
 	suite, err := lookupSuite(req.CipherSuite)
 	if err != nil {
 		return nil, err
@@ -137,6 +134,7 @@ func (s *Server) CreateGroup(_ context.Context, req *pb.CreateGroupRequest) (*pb
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "NewGroup: %v", err)
 	}
+	g.SetEncryptHandshakes(req.EncryptHandshake)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.alloc()
@@ -186,9 +184,6 @@ func (s *Server) CreateKeyPackage(_ context.Context, req *pb.CreateKeyPackageReq
 }
 
 func (s *Server) JoinGroup(_ context.Context, req *pb.JoinGroupRequest) (*pb.JoinGroupResponse, error) {
-	if req.EncryptHandshake {
-		return nil, status.Error(codes.Unimplemented, "encrypted handshake not supported")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, ok := s.txns[req.TransactionId]
@@ -205,6 +200,7 @@ func (s *Server) JoinGroup(_ context.Context, req *pb.JoinGroupRequest) (*pb.Joi
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "JoinFromWelcome: %v", err)
 	}
+	g.SetEncryptHandshakes(req.EncryptHandshake)
 	id := s.alloc()
 	s.states[id] = &state{suite: tx.suite, g: g}
 	// Consumed transaction: delete to release the stored private keys.
@@ -394,9 +390,6 @@ func (s *Server) GroupInfo(_ context.Context, req *pb.GroupInfoRequest) (*pb.Gro
 }
 
 func (s *Server) ExternalJoin(_ context.Context, req *pb.ExternalJoinRequest) (*pb.ExternalJoinResponse, error) {
-	if req.EncryptHandshake {
-		return nil, status.Error(codes.Unimplemented, "encrypted handshake not supported")
-	}
 	if len(req.Psks) > 0 {
 		return nil, status.Error(codes.Unimplemented, "PSKs in external join not supported")
 	}
@@ -417,6 +410,9 @@ func (s *Server) ExternalJoin(_ context.Context, req *pb.ExternalJoinRequest) (*
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "ExternalCommit: %v", err)
 	}
+	// The external commit itself is always a PublicMessage (RFC 9420 §12.4.3.2);
+	// EncryptHandshake only governs this member's future commits after joining.
+	g.SetEncryptHandshakes(req.EncryptHandshake)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.alloc()

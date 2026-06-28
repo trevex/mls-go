@@ -5,7 +5,8 @@
 # It clones (or reuses) the runner + OpenMLS, builds every binary, starts our
 # gRPC server and OpenMLS's interop_client on free ports, and runs a set of
 # known-interoperable scenarios on MLS ciphersuite 1
-# (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519) with PublicMessage handshakes.
+# (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519) in two passes: PublicMessage
+# handshakes, then encrypted (PrivateMessage) member handshakes.
 #
 # Run it inside the Rust-enabled dev shell (cargo + rustc are required to build
 # OpenMLS):
@@ -165,7 +166,8 @@ wait_port "$OUR_PORT" "our server"
 wait_port "$OPENMLS_PORT" "OpenMLS"
 
 # --- 7. run the scenarios ----------------------------------------------------
-# Each config is run with -suite 1 -public across both clients (the runner
+# Each config is run twice — once with PublicMessage handshakes, once with
+# encrypted (PrivateMessage) member handshakes — across both clients (the runner
 # exercises every alice/bob role assignment). Exit code 0 = all combos passed.
 #
 # We ship repo-local configs under scripts/e2e-configs/ that contain exactly the
@@ -186,26 +188,43 @@ declare -a CONFIGS=(
 
 declare -a RESULTS=()
 overall=0
-for cfg in "${CONFIGS[@]}"; do
-  name="$(basename "$cfg")"
-  log "scenario: $name (suite 1, PublicMessage)"
-  if "$RUNNER_BIN" \
-      -config "$cfg" \
-      -suite 1 -public \
-      -client "127.0.0.1:$OUR_PORT" \
-      -client "127.0.0.1:$OPENMLS_PORT" 2>&1 | sed 's/^/    /'; then
-    ok "$name"
-    RESULTS+=("PASS  $name")
-  else
-    fail "$name"
-    RESULTS+=("FAIL  $name")
-    overall=1
-  fi
-done
+
+# run_pass LABEL EXTRA_RUNNER_FLAGS...
+# Runs every config against both clients for the given handshake-framing mode.
+# Pass `-public=true` for PublicMessage handshakes, `-public=false` for encrypted
+# (PrivateMessage) member handshakes — the runner sets encrypt_handshake on
+# createGroup/joinGroup accordingly. (External-commit joins stay PublicMessage
+# per RFC 9420 regardless; the runner handles that.)
+run_pass() {
+  local label="$1"; shift
+  local cfg name
+  for cfg in "${CONFIGS[@]}"; do
+    name="$(basename "$cfg") [$label]"
+    log "scenario: $name (suite 1, $label)"
+    if "$RUNNER_BIN" \
+        -config "$cfg" \
+        -suite 1 "$@" \
+        -client "127.0.0.1:$OUR_PORT" \
+        -client "127.0.0.1:$OPENMLS_PORT" 2>&1 | sed 's/^/    /'; then
+      ok "$name"
+      RESULTS+=("PASS  $name")
+    else
+      fail "$name"
+      RESULTS+=("FAIL  $name")
+      overall=1
+    fi
+  done
+}
+
+# Pass 1: PublicMessage handshakes (the original gate).
+run_pass public -public=true
+# Pass 2: encrypted member handshakes (PrivateMessage) — exercises our
+# encrypt_handshake support end-to-end against OpenMLS on suite 1.
+run_pass encrypted -public=false
 
 # --- 8. summary --------------------------------------------------------------
 echo ""
-echo "================ e2e vs OpenMLS summary (suite 1, public) ================"
+echo "========== e2e vs OpenMLS summary (suite 1, public + encrypted) =========="
 for r in "${RESULTS[@]}"; do echo "  $r"; done
 echo "========================================================================="
 if [ "$overall" -eq 0 ]; then

@@ -1,6 +1,8 @@
 package group
 
 import (
+	"crypto/rand"
+
 	"github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/tree"
 )
@@ -51,8 +53,9 @@ func (g *Group) ProposeUpdate() (Proposal, error) {
 	return Proposal{Type: ProposalTypeUpdate, Update: &Update{LeafNode: ln}}, nil
 }
 
-// FrameProposal frames a bare Proposal as a member PublicMessage
-// (RFC 9420 §6.2), returning the MLSMessage bytes for by-reference delivery.
+// FrameProposal frames a bare Proposal as a member PublicMessage or, when
+// encryptHandshakes is true, a member PrivateMessage (RFC 9420 §6.2/§6.3),
+// returning the MLSMessage bytes for by-reference delivery.
 func (g *Group) FrameProposal(p Proposal) ([]byte, error) {
 	body, err := p.MarshalMLS()
 	if err != nil {
@@ -66,6 +69,23 @@ func (g *Group) FrameProposal(p Proposal) ([]byte, error) {
 		Content:     body,
 	}
 	gc := g.groupContext
+	if g.encryptHandshakes {
+		var guard [4]byte
+		if _, err := rand.Read(guard[:]); err != nil {
+			return nil, err
+		}
+		pm, err := framing.ProtectPrivate(g.suite, g.signer, &gc, g.secretTree, g.epoch.SenderDataSecret, fc, g.handshakeGeneration, guard, 0, nil)
+		if err != nil {
+			return nil, err
+		}
+		g.handshakeGeneration++
+		msg := framing.MLSMessage{
+			Version:    tree.ProtocolVersionMLS10,
+			WireFormat: framing.WireFormatPrivateMessage,
+			Private:    &pm,
+		}
+		return msg.MarshalMLS()
+	}
 	pm, err := framing.ProtectPublic(g.suite, g.signer, &gc, g.epoch.MembershipKey, fc, nil)
 	if err != nil {
 		return nil, err

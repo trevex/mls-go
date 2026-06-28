@@ -45,7 +45,7 @@ func TestSignCommitConfirmedInput(t *testing.T) {
 		Content:     minimalCommitContent,
 	}
 
-	confirmedInput, sig, err := SignCommit(suite, priv, gc, fc)
+	confirmedInput, sig, err := SignCommit(suite, priv, gc, fc, WireFormatPublicMessage)
 	if err != nil {
 		t.Fatalf("SignCommit: %v", err)
 	}
@@ -73,6 +73,61 @@ func TestSignCommitConfirmedInput(t *testing.T) {
 	}
 	if !bytes.Equal(confirmedInput, wantInput) {
 		t.Fatalf("confirmedInput mismatch:\n got  %x\n want %x", confirmedInput, wantInput)
+	}
+}
+
+// TestSignCommitWireFormatBinding verifies that SignCommit encodes the supplied
+// wire_format into both the TBS (signature) and the confirmedInput, so the two
+// wire formats produce distinct outputs (RFC 9420 §6.1 / §8.2).
+func TestSignCommitWireFormatBinding(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	if !ok {
+		t.Skip("suite not registered")
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gc := keyschedule.GroupContext{
+		Version:                 tree.ProtocolVersionMLS10,
+		CipherSuite:             cipher.X25519_AES128GCM_SHA256_Ed25519,
+		GroupID:                 []byte("test-group"),
+		Epoch:                   3,
+		TreeHash:                make([]byte, 32),
+		ConfirmedTranscriptHash: make([]byte, 32),
+	}
+	fc := FramedContent{
+		GroupID:     []byte("test-group"),
+		Epoch:       3,
+		Sender:      Sender{Type: SenderTypeMember, LeafIndex: 0},
+		ContentType: ContentTypeCommit,
+		Content:     minimalCommitContent,
+	}
+
+	pubInput, _, err := SignCommit(suite, priv, &gc, fc, WireFormatPublicMessage)
+	if err != nil {
+		t.Fatalf("SignCommit(public): %v", err)
+	}
+	privInput, _, err := SignCommit(suite, priv, &gc, fc, WireFormatPrivateMessage)
+	if err != nil {
+		t.Fatalf("SignCommit(private): %v", err)
+	}
+
+	if len(pubInput) < 2 || len(privInput) < 2 {
+		t.Fatalf("confirmedInput too short: pub=%d priv=%d", len(pubInput), len(privInput))
+	}
+
+	// confirmedInput[0:2] is the 2-byte big-endian wire_format.
+	// Index 1 holds the low byte: 0x01 for PublicMessage, 0x02 for PrivateMessage.
+	if want := byte(WireFormatPublicMessage); pubInput[1] != want {
+		t.Fatalf("pubInput[1] = %02x, want %02x", pubInput[1], want)
+	}
+	if want := byte(WireFormatPrivateMessage); privInput[1] != want {
+		t.Fatalf("privInput[1] = %02x, want %02x", privInput[1], want)
+	}
+	if bytes.Equal(pubInput, privInput) {
+		t.Fatal("confirmedInputs for different wire formats must differ")
 	}
 }
 
@@ -110,7 +165,7 @@ func TestAssembleCommitPublicRoundTrip(t *testing.T) {
 	}
 
 	// Step 1: sign the commit, getting the signature.
-	_, sig, err := SignCommit(suite, priv, gc, fc)
+	_, sig, err := SignCommit(suite, priv, gc, fc, WireFormatPublicMessage)
 	if err != nil {
 		t.Fatalf("SignCommit: %v", err)
 	}

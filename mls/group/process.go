@@ -2,6 +2,7 @@ package group
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/trevex/mls-go/mls/cipher"
@@ -215,6 +216,111 @@ func (g *Group) resolveOwnUpdatePriv(cm Commit, cache map[string]cachedProposal,
 	return nil, nil
 }
 
+// authenticateProposalMessage recovers an inbound by-reference proposal,
+// dispatching on its wire format, and returns its ProposalRef (RefHash over the
+// AuthenticatedContent), the parsed Proposal, and the sender leaf. The ref
+// includes wire_format, so committer and processor compute matching refs for the
+// same delivered bytes.
+func (g *Group) authenticateProposalMessage(propBytes []byte) (ref []byte, prop Proposal, senderLeaf uint32, err error) {
+	var m framing.MLSMessage
+	if err = m.UnmarshalMLS(propBytes); err != nil {
+		return nil, Proposal{}, 0, err
+	}
+	gc := g.groupContext
+	var ac framing.AuthenticatedContent
+	switch {
+	case m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil:
+		leaf := m.Public.Content.Sender.LeafIndex
+		ln, lerr := g.tree.LeafNodeAt(leaf)
+		if lerr != nil {
+			return nil, Proposal{}, 0, fmt.Errorf("leaf %d: %w", leaf, lerr)
+		}
+		ac, err = framing.UnprotectPublic(g.suite, ln.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
+	case m.WireFormat == framing.WireFormatPrivateMessage && m.Private != nil:
+		ac, err = framing.UnprotectPrivate(g.suite, g.sigPubByLeaf, &gc, g.secretTree, g.epoch.SenderDataSecret, *m.Private)
+		if err == nil && ac.Content.Sender.Type != framing.SenderTypeMember {
+			err = errors.New("authenticateProposalMessage: external sender in PrivateMessage proposal")
+		}
+	default:
+		err = errors.New("authenticateProposalMessage: unsupported proposal wire format")
+	}
+	if err != nil {
+		return nil, Proposal{}, 0, err
+	}
+	acBytes, merr := ac.MarshalMLS()
+	if merr != nil {
+		return nil, Proposal{}, 0, merr
+	}
+	ref, err = g.suite.RefHash("MLS 1.0 Proposal Reference", acBytes)
+	if err != nil {
+		return nil, Proposal{}, 0, err
+	}
+	if err = prop.UnmarshalMLS(ac.Content.Content); err != nil {
+		return nil, Proposal{}, 0, err
+	}
+	return ref, prop, ac.Content.Sender.LeafIndex, nil
+}
+
+// authenticateCommit recovers the AuthenticatedContent of an inbound member
+// commit, dispatching on its wire format. PrivateMessage commits are decrypted
+// with the current epoch's secret tree; the recovered sender MUST be a member
+// (external/new_member commits are PublicMessage by RFC 9420 — fail closed).
+func (g *Group) authenticateCommit(m framing.MLSMessage) (framing.AuthenticatedContent, error) {
+	gc := g.groupContext
+	switch {
+	case m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil:
+		leaf := m.Public.Content.Sender.LeafIndex
+		ln, err := g.tree.LeafNodeAt(leaf)
+		if err != nil {
+			return framing.AuthenticatedContent{}, fmt.Errorf("committer leaf %d: %w", leaf, err)
+		}
+		return framing.UnprotectPublic(g.suite, ln.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
+	case m.WireFormat == framing.WireFormatPrivateMessage && m.Private != nil:
+		ac, err := framing.UnprotectPrivate(g.suite, g.sigPubByLeaf, &gc, g.secretTree, g.epoch.SenderDataSecret, *m.Private)
+		if err != nil {
+			return framing.AuthenticatedContent{}, err
+		}
+		// Defense-in-depth: UnprotectPrivate currently always reconstructs the sender
+		// as a member; this guard fails closed should that ever change.
+		if ac.Content.Sender.Type != framing.SenderTypeMember {
+			return framing.AuthenticatedContent{}, errors.New("authenticateCommit: external sender in PrivateMessage commit")
+		}
+		return ac, nil
+	default:
+		return framing.AuthenticatedContent{}, errors.New("authenticateCommit: unsupported commit wire format")
+	}
+}
+
+// PeekCommit authenticates an inbound member commit (PublicMessage or
+// PrivateMessage) and returns the parsed Commit WITHOUT applying it, so an
+// integrator can inspect its proposals (e.g. detect a self-Remove) regardless of
+// handshake framing. The caller must still be a member of the current epoch — a
+// PrivateMessage commit is decrypted with the current epoch's secret tree.
+// It returns an error for external/new_member commits and for non-commit content.
+func (g *Group) PeekCommit(commitMsg []byte) (Commit, error) {
+	var m framing.MLSMessage
+	if err := m.UnmarshalMLS(commitMsg); err != nil {
+		return Commit{}, err
+	}
+	// External / new_member commits are not member commits.
+	if m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil &&
+		m.Public.Content.Sender.Type != framing.SenderTypeMember {
+		return Commit{}, errors.New("group: PeekCommit: not a member commit")
+	}
+	ac, err := g.authenticateCommit(m)
+	if err != nil {
+		return Commit{}, err
+	}
+	if ac.Content.ContentType != framing.ContentTypeCommit {
+		return Commit{}, errors.New("group: PeekCommit: not a commit")
+	}
+	var cm Commit
+	if err := cm.UnmarshalMLS(ac.Content.Content); err != nil {
+		return Commit{}, err
+	}
+	return cm, nil
+}
+
 // ProcessCommit advances the group by one epoch, given the proposals delivered
 // before the commit (cached by reference) and the commit MLSMessage. It verifies
 // the commit's authentication and confirmation_tag and returns an error (leaving
@@ -230,67 +336,31 @@ func (g *Group) resolveOwnUpdatePriv(cm Commit, cache map[string]cachedProposal,
 //     bare Proposal body).
 func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	// step 1: Build proposal cache from the by-reference proposals.
-	// Each proposal is a PublicMessage whose AuthenticatedContent bytes serve as
-	// the input to RefHash("MLS 1.0 Proposal Reference", …) (RFC 9420 §12.4/§5.2).
+	// Each proposal may be a PublicMessage or PrivateMessage; the ProposalRef is
+	// RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent) (RFC 9420
+	// §12.4/§5.2: the hash is over the full authenticated framing, not just the
+	// bare Proposal body). authenticateProposalMessage dispatches on wire format.
 	cache := make(map[string]cachedProposal, len(proposals))
 	for idx, propBytes := range proposals {
-		var m framing.MLSMessage
-		if err := m.UnmarshalMLS(propBytes); err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] parse: %w", idx, err)
-		}
-		if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] is not a PublicMessage", idx)
-		}
-		senderLeaf := m.Public.Content.Sender.LeafIndex
-		senderLeafNode, err := g.tree.LeafNodeAt(senderLeaf)
+		ref, prop, senderLeaf, err := g.authenticateProposalMessage(propBytes)
 		if err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] sender leaf %d: %w", idx, senderLeaf, err)
-		}
-		gc := g.groupContext
-		ac, err := framing.UnprotectPublic(g.suite, senderLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
-		if err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] authenticate: %w", idx, err)
-		}
-		var prop Proposal
-		if err := prop.UnmarshalMLS(ac.Content.Content); err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] parse body: %w", idx, err)
-		}
-		// ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent)
-		// (RFC 9420 §12.4 / §5.2: the hash is over the full authenticated framing,
-		// not just the bare Proposal body).
-		acBytes, err := ac.MarshalMLS()
-		if err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] marshal AC: %w", idx, err)
-		}
-		ref, err := g.suite.RefHash("MLS 1.0 Proposal Reference", acBytes)
-		if err != nil {
-			return fmt.Errorf("group: ProcessCommit: proposal[%d] RefHash: %w", idx, err)
+			return fmt.Errorf("group: ProcessCommit: proposal[%d]: %w", idx, err)
 		}
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
 	}
 
-	// step 2: Authenticate the commit (PublicMessage, member sender).
+	// step 2: Authenticate the commit, dispatching on wire format.
 	var m framing.MLSMessage
 	if err := m.UnmarshalMLS(commit); err != nil {
 		return fmt.Errorf("group: ProcessCommit: parse commit: %w", err)
 	}
-	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-		return fmt.Errorf("group: ProcessCommit: commit is not a PublicMessage")
-	}
 
-	// Dispatch: new_member_commit (external joiner) is handled separately because
-	// the committer is not in the tree and uses the joiner's UpdatePath key for auth.
-	if m.Public.Content.Sender.Type == framing.SenderTypeNewMemberCommit {
+	// External joins are always PublicMessage with a new_member_commit sender.
+	if m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil &&
+		m.Public.Content.Sender.Type == framing.SenderTypeNewMemberCommit {
 		return g.processExternalCommit(m)
 	}
-
-	committerLeaf := m.Public.Content.Sender.LeafIndex
-	committerLeafNode, err := g.tree.LeafNodeAt(committerLeaf)
-	if err != nil {
-		return fmt.Errorf("group: ProcessCommit: committer leaf %d: %w", committerLeaf, err)
-	}
-	gc := g.groupContext
-	ac, err := framing.UnprotectPublic(g.suite, committerLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
+	ac, err := g.authenticateCommit(m)
 	if err != nil {
 		return fmt.Errorf("group: ProcessCommit: authenticate commit: %w", err)
 	}
@@ -298,6 +368,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		return fmt.Errorf("group: ProcessCommit: commit epoch %d != group epoch %d",
 			ac.Content.Epoch, g.groupContext.Epoch)
 	}
+	committerLeaf := ac.Content.Sender.LeafIndex
 
 	// step 3: Parse the Commit body.
 	var cm Commit
@@ -490,8 +561,9 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	g.secretTree = st
 	// Seed the next epoch's resumption PSK into history immediately.
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
-	// Reset per-epoch sender ratchet counter (RFC 9420 §9.1).
+	// Reset per-epoch sender ratchet counters (RFC 9420 §9.1).
 	g.appGeneration = 0
+	g.handshakeGeneration = 0
 	// Clear pending updates on epoch change — any pending key from the old epoch
 	// is now either committed (and swapped into g.priv) or superseded.
 	g.pendingUpdates = map[string][]byte{}

@@ -58,6 +58,81 @@ func TestPrivateMessageUnprotectApplication(t *testing.T) {
 	}
 }
 
+// TestAssembleCommitPrivateRoundTrip verifies that AssembleCommitPrivate (using
+// a precomputed signature from SignCommit bound to WireFormatPrivateMessage)
+// produces a PrivateMessage that UnprotectPrivate can decrypt and authenticate,
+// recovering the original content and confirmation_tag (RFC 9420 §6.3).
+func TestAssembleCommitPrivateRoundTrip(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	if !ok {
+		t.Fatal("suite not registered")
+	}
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gc := buildCase0GC(t)
+
+	encryptionSecret := make([]byte, suite.HashLen())
+	if _, err := rand.Read(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	senderDataSecret := make([]byte, suite.HashLen())
+	if _, err := rand.Read(senderDataSecret); err != nil {
+		t.Fatal(err)
+	}
+
+	fc := FramedContent{
+		GroupID:     gc.GroupID,
+		Epoch:       gc.Epoch,
+		Sender:      Sender{Type: SenderTypeMember, LeafIndex: 0},
+		ContentType: ContentTypeCommit,
+		Content:     minimalCommitContent,
+	}
+
+	// Precompute signature bound to WireFormatPrivateMessage.
+	_, sig, err := SignCommit(suite, priv, gc, fc, WireFormatPrivateMessage)
+	if err != nil {
+		t.Fatalf("SignCommit: %v", err)
+	}
+
+	// Derive a dummy confirmation tag.
+	confTag := suite.MAC(make([]byte, suite.HashLen()), []byte("confirmed"))
+
+	// Seal using a fresh single-leaf secret tree (leaf 0).
+	stSeal, err := keyschedule.NewSecretTree(suite, 1, encryptionSecret)
+	if err != nil {
+		t.Fatalf("NewSecretTree (seal): %v", err)
+	}
+	pm, err := AssembleCommitPrivate(suite, stSeal, senderDataSecret, fc, 0, [4]byte{}, 0, sig, confTag)
+	if err != nil {
+		t.Fatalf("AssembleCommitPrivate: %v", err)
+	}
+
+	// Open using a separate tree seeded from the same encryption secret.
+	stOpen, err := keyschedule.NewSecretTree(suite, 1, encryptionSecret)
+	if err != nil {
+		t.Fatalf("NewSecretTree (open): %v", err)
+	}
+	pubOf := func(uint32) ([]byte, error) { return pub, nil }
+	ac, err := UnprotectPrivate(suite, pubOf, gc, stOpen, senderDataSecret, pm)
+	if err != nil {
+		t.Fatalf("UnprotectPrivate: %v", err)
+	}
+
+	if ac.WireFormat != WireFormatPrivateMessage {
+		t.Fatalf("WireFormat = %v, want WireFormatPrivateMessage", ac.WireFormat)
+	}
+	if !bytes.Equal(ac.Content.Content, minimalCommitContent) {
+		t.Fatalf("content mismatch: got %x want %x", ac.Content.Content, minimalCommitContent)
+	}
+	if !bytes.Equal(ac.Auth.ConfirmationTag, confTag) {
+		t.Fatalf("confirmation_tag mismatch: got %x want %x", ac.Auth.ConfirmationTag, confTag)
+	}
+}
+
 // TestPrivateMessageRoundTripApplication re-encrypts the recovered application
 // content with a fresh Ed25519 key, marshals the PrivateMessage, parses it
 // back, and verifies the round-trip (RFC 9420 §6.3).

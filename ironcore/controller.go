@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/trevex/mls-go/mls/cipher"
-	"github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/group"
 	"github.com/trevex/mls-go/mls/tree"
 )
@@ -41,6 +40,17 @@ var (
 // ok=false ⇒ no KeyPackage available yet; the identity is reported Pending.
 type KeyPackageResolver func(identity []byte) (kpMsg []byte, ok bool)
 
+// HandshakePrivacy selects how a VNI frames its members' outbound handshakes.
+// The zero value is HandshakeEncrypted — the default — so a reflector relaying a
+// member commit/proposal sees only ciphertext. External-commit recovery is
+// always PublicMessage regardless (RFC 9420 §12.4.3).
+type HandshakePrivacy int
+
+const (
+	HandshakeEncrypted HandshakePrivacy = iota // default: member handshakes are PrivateMessage
+	HandshakePlaintext                         // member handshakes are PublicMessage
+)
+
 // ControllerConfig configures one VNI's membership controller.
 type ControllerConfig struct {
 	VNI       uint32
@@ -52,6 +62,10 @@ type ControllerConfig struct {
 	Signer    crypto.Signer             // this node's own signing key
 	Lifetime  tree.Lifetime             // KeyPackage lifetime for our external-commit/join leaves
 	Resolve   KeyPackageResolver        // resolves desired identities → published KeyPackages
+
+	// HandshakePrivacy selects PrivateMessage (default) vs PublicMessage framing
+	// for this VNI's member handshakes. Zero value = HandshakeEncrypted.
+	HandshakePrivacy HandshakePrivacy
 }
 
 // ReconcileResult reports what one Reconcile did.
@@ -92,6 +106,7 @@ func NewController(cfg ControllerConfig, g *group.Group) (*Controller, error) {
 		ordering: cfg.Ordering,
 	}
 	if g != nil {
+		c.applyHandshakePrivacy()
 		if err := c.deriveCur(); err != nil {
 			return nil, fmt.Errorf("ironcore: NewController: deriveCur: %w", err)
 		}
@@ -154,6 +169,7 @@ func (c *Controller) JoinViaWelcome(welcomeMsg, kpMsg, initPriv, leafPriv []byte
 		return fmt.Errorf("ironcore: JoinViaWelcome: %w", err)
 	}
 	c.g = g
+	c.applyHandshakePrivacy()
 	if err := c.deriveCur(); err != nil {
 		return fmt.Errorf("ironcore: JoinViaWelcome: deriveCur: %w", err)
 	}
@@ -180,6 +196,7 @@ func (c *Controller) JoinViaExternalCommit(ctx context.Context, gi *group.GroupI
 		return nil, ErrJoinSuperseded
 	}
 	c.g = newGroup
+	c.applyHandshakePrivacy()
 	if err := c.deriveCur(); err != nil {
 		return nil, fmt.Errorf("ironcore: JoinViaExternalCommit: deriveCur: %w", err)
 	}
@@ -366,6 +383,7 @@ func (c *Controller) AutoRecover(ctx context.Context, candidates []group.CommitR
 		return nil, err
 	}
 	c.g = vg.g // adopt the recovered group
+	c.applyHandshakePrivacy()
 	if rerr := c.rotateSA(); rerr != nil {
 		return commitMsg, fmt.Errorf("ironcore: AutoRecover: rotateSA: %w", rerr)
 	}
@@ -373,6 +391,15 @@ func (c *Controller) AutoRecover(ctx context.Context, candidates []group.CommitR
 }
 
 // ─── unexported helpers ───────────────────────────────────────────────────────
+
+// applyHandshakePrivacy sets the adopted group's outbound-handshake framing from
+// config. External-commit/recovery messages are always PublicMessage regardless
+// (RFC 9420 §12.4.3); this only governs the member's own future commits/proposals.
+func (c *Controller) applyHandshakePrivacy() {
+	if c.g != nil {
+		c.g.SetEncryptHandshakes(c.cfg.HandshakePrivacy != HandshakePlaintext)
+	}
+}
 
 // deriveCur derives the current SA from g and stores it in c.curSA.
 func (c *Controller) deriveCur() error {
@@ -440,38 +467,15 @@ func (c *Controller) identityToLeaf() (map[string]uint32, error) {
 	return m, nil
 }
 
-// memberCommitBody extracts the Commit body bytes from a framed member
-// PublicMessage commit (SenderTypeMember). Returns (body, true) for a valid
-// member commit, (nil, false) for any other message type or parse error.
-// Only the Commit body bytes are returned — no authentication is performed here
-// (authentication happens in ProcessCommit); this is purely structural.
-func memberCommitBody(commitMsg []byte) ([]byte, bool) {
-	var m framing.MLSMessage
-	if err := m.UnmarshalMLS(commitMsg); err != nil {
-		return nil, false
-	}
-	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-		return nil, false
-	}
-	if m.Public.Content.Sender.Type != framing.SenderTypeMember {
-		return nil, false
-	}
-	if m.Public.Content.ContentType != framing.ContentTypeCommit {
-		return nil, false
-	}
-	return m.Public.Content.Content, true
-}
-
-// commitRemovesSelf reports whether the framed member commit contains a by-value
-// Remove of this node's own leaf. Returns false for any
-// parse error or non-member commit.
+// commitRemovesSelf reports whether the framed member commit (PublicMessage or
+// PrivateMessage) contains a by-value Remove of this node's own leaf. It uses
+// Group.PeekCommit to authenticate and parse the commit regardless of framing.
+// Returns false for any parse error or non-member commit.
+// NOTE: only by-value Remove proposals embedded directly in the Commit are
+// inspected; by-reference Removes are not detected here.
 func (c *Controller) commitRemovesSelf(commitMsg []byte) bool {
-	body, ok := memberCommitBody(commitMsg)
-	if !ok {
-		return false
-	}
-	var cm group.Commit
-	if err := cm.UnmarshalMLS(body); err != nil {
+	cm, err := c.g.PeekCommit(commitMsg)
+	if err != nil {
 		return false
 	}
 	own := c.g.OwnLeaf()

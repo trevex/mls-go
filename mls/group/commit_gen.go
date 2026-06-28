@@ -14,14 +14,15 @@ type CommitOptions struct {
 	// ByValue holds proposals inlined into the Commit (e.g. Adds the committer
 	// originates).
 	ByValue []Proposal
-	// ByReference holds previously-delivered PublicMessage proposal MLSMessage
-	// bytes to include by reference (ProposalRef).
+	// ByReference holds previously-delivered PublicMessage or PrivateMessage
+	// proposal MLSMessage bytes to include by reference (ProposalRef).
 	ByReference [][]byte
 }
 
 // Commit applies the options' proposals to a cloned tree (RFC 9420 §12.3
 // order), generates an UpdatePath, advances the key schedule to epoch n+1,
-// frames the commit as a PublicMessage, builds a Welcome for newly-added
+// frames the commit as a PrivateMessage (when encryptHandshakes is set) or a
+// PublicMessage (default), builds a Welcome for newly-added
 // members, and advances g to epoch n+1. It returns the commit MLSMessage bytes
 // and (if any members were added) the Welcome MLSMessage bytes
 // (RFC 9420 §12.4/§12.4.3.1).
@@ -39,43 +40,17 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	}
 
 	// Build proposal cache from the by-reference proposals (same logic as
-	// ProcessCommit — UnmarshalMLS → UnprotectPublic → RefHash).
+	// ProcessCommit — authenticate → RefHash, dispatching on wire format).
 	// Also build Commit.Proposals by-reference entries in the same pass so we
 	// never re-parse or swallow errors in a second loop.
 	var cm Commit
 	cache := make(map[string]cachedProposal, len(opt.ByReference))
 	for idx, propBytes := range opt.ByReference {
-		var m framing.MLSMessage
-		if err := m.UnmarshalMLS(propBytes); err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] parse: %w", idx, err)
-		}
-		if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] not a PublicMessage", idx)
-		}
-		senderLeaf := m.Public.Content.Sender.LeafIndex
-		senderLeafNode, err := g.tree.LeafNodeAt(senderLeaf)
+		ref, prop, senderLeaf, err := g.authenticateProposalMessage(propBytes)
 		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] sender leaf %d: %w", idx, senderLeaf, err)
-		}
-		gc := g.groupContext
-		ac, err := framing.UnprotectPublic(g.suite, senderLeafNode.SignatureKey, &gc, g.epoch.MembershipKey, *m.Public)
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] authenticate: %w", idx, err)
-		}
-		acBytes, err := ac.MarshalMLS()
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] marshal AC: %w", idx, err)
-		}
-		ref, err := g.suite.RefHash("MLS 1.0 Proposal Reference", acBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] RefHash: %w", idx, err)
-		}
-		var prop Proposal
-		if err := prop.UnmarshalMLS(ac.Content.Content); err != nil {
-			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d] parse body: %w", idx, err)
+			return nil, nil, fmt.Errorf("group: Commit: by-reference[%d]: %w", idx, err)
 		}
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
-		// Reuse the already-computed ref — no second parse needed.
 		cm.Proposals = append(cm.Proposals, ProposalOrRef{Type: ProposalOrRefTypeReference, Reference: ref})
 	}
 	// Append by-value proposals after by-reference ones. The added members'
@@ -146,7 +121,11 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 		Content:     commitBody,
 	}
 	gc := g.groupContext
-	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc)
+	wf := framing.WireFormatPublicMessage
+	if g.encryptHandshakes {
+		wf = framing.WireFormatPrivateMessage
+	}
+	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc, wf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: Commit: SignCommit: %w", err)
 	}
@@ -186,15 +165,27 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	// Compute confirmation_tag.
 	confTag := keyschedule.ConfirmationTag(g.suite, es.ConfirmationKey, confirmed)
 
-	// Assemble the PublicMessage (adds membership_tag using gc_n / membership_key_n).
-	pubMsg, err := framing.AssembleCommitPublic(g.suite, &gc, g.epoch.MembershipKey, fc, sig, confTag)
-	if err != nil {
-		return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPublic: %w", err)
-	}
-	commitMLS := framing.MLSMessage{
-		Version:    tree.ProtocolVersionMLS10,
-		WireFormat: framing.WireFormatPublicMessage,
-		Public:     &pubMsg,
+	// Assemble the MLSMessage (PrivateMessage when encryptHandshakes, else PublicMessage).
+	var commitMLS framing.MLSMessage
+	if wf == framing.WireFormatPrivateMessage {
+		// Frame under the CURRENT (epoch-n) secret tree + sender-data secret,
+		// BEFORE the atomic state swap below installs epoch n+1.
+		var guard [4]byte
+		if _, err := rand.Read(guard[:]); err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: rand.Read(guard): %w", err)
+		}
+		privMsg, err := framing.AssembleCommitPrivate(g.suite, g.secretTree, g.epoch.SenderDataSecret, fc, g.handshakeGeneration, guard, 0, sig, confTag)
+		if err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPrivate: %w", err)
+		}
+		g.handshakeGeneration++
+		commitMLS = framing.MLSMessage{Version: tree.ProtocolVersionMLS10, WireFormat: framing.WireFormatPrivateMessage, Private: &privMsg}
+	} else {
+		pubMsg, err := framing.AssembleCommitPublic(g.suite, &gc, g.epoch.MembershipKey, fc, sig, confTag)
+		if err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPublic: %w", err)
+		}
+		commitMLS = framing.MLSMessage{Version: tree.ProtocolVersionMLS10, WireFormat: framing.WireFormatPublicMessage, Public: &pubMsg}
 	}
 	commitBytes, err := commitMLS.MarshalMLS()
 	if err != nil {
@@ -255,6 +246,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	g.secretTree = st
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
 	g.appGeneration = 0
+	g.handshakeGeneration = 0
 	// Clear pending updates — committer always rekeys its own leaf via
 	// GenerateUpdatePath, so any pending updates from ProposeUpdate are moot.
 	g.pendingUpdates = map[string][]byte{}

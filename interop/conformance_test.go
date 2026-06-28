@@ -22,6 +22,7 @@ import (
 	pb "github.com/trevex/mls-go/interop/proto/mlspb"
 	"github.com/trevex/mls-go/interop/server"
 	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/framing"
 )
 
 // dial starts a fresh gRPC server backed by a bufconn listener and returns
@@ -436,6 +437,83 @@ func TestExternalJoin(t *testing.T) {
 				}
 			}
 			assertStateAuth(t, ctx, cli, "after external-join", alice, bob, carol)
+		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 8: Encrypted handshake commit (EncryptHandshake: true)
+// Alice creates a group with encrypt_handshake=true, adds Bob, commits.
+// The commit wire format must be PrivateMessage.  Bob joins and both members
+// must converge to the same epoch authenticator.
+// ----------------------------------------------------------------------------
+
+func TestEncryptedHandshakeCommit(t *testing.T) {
+	for _, cs := range testSuites() {
+		cs := cs
+		t.Run(suiteName(cs), func(t *testing.T) {
+			t.Parallel()
+			cli, done := dial(t)
+			defer done()
+			ctx := context.Background()
+
+			cg, err := cli.CreateGroup(ctx, &pb.CreateGroupRequest{
+				GroupId: []byte("g8enc"), CipherSuite: cs, Identity: []byte("alice"),
+				EncryptHandshake: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			alice := cg.StateId
+
+			kp, err := cli.CreateKeyPackage(ctx, &pb.CreateKeyPackageRequest{
+				CipherSuite: cs, Identity: []byte("bob"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Welcome-producing Add must be by-value (engine constraint).
+			com, err := cli.Commit(ctx, &pb.CommitRequest{
+				StateId: alice,
+				ByValue: []*pb.ProposalDescription{
+					{ProposalType: []byte("add"), KeyPackage: kp.KeyPackage},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// The commit must be framed as a PrivateMessage.
+			var msg framing.MLSMessage
+			if err := msg.UnmarshalMLS(com.Commit); err != nil {
+				t.Fatalf("UnmarshalMLS(commit): %v", err)
+			}
+			if msg.WireFormat != framing.WireFormatPrivateMessage {
+				t.Fatalf("commit wire format = %v, want WireFormatPrivateMessage (%v)",
+					msg.WireFormat, framing.WireFormatPrivateMessage)
+			}
+
+			ha, err := cli.HandlePendingCommit(ctx, &pb.HandlePendingCommitRequest{StateId: alice})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			jg, err := cli.JoinGroup(ctx, &pb.JoinGroupRequest{
+				TransactionId: kp.TransactionId, Welcome: com.Welcome,
+				EncryptHandshake: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Response epoch authenticators must match.
+			if !bytes.Equal(ha.EpochAuthenticator, jg.EpochAuthenticator) {
+				t.Fatalf("epoch_auth mismatch in responses: alice %x  bob %x",
+					ha.EpochAuthenticator, jg.EpochAuthenticator)
+			}
+			// Double-check via StateAuth RPC.
+			assertStateAuth(t, ctx, cli, "encrypted 1:1 join", alice, jg.StateId)
 		})
 	}
 }

@@ -26,6 +26,7 @@ type Metrics struct {
 	CommitBytes     int
 	MaxOverlap      int    // max |saCache| observed (the W actually needed +1)
 	MaxSendLag      uint64 // max (currentEpoch - sendEpoch) observed
+	PlaintextHandshakeExposures int // member handshakes a reflector saw as PublicMessage in an encrypted VNI
 	cpuNanos        map[string]int64
 	cpuCount        map[string]int64
 }
@@ -74,6 +75,7 @@ func (m *Metrics) Report() string {
 	_, _ = fmt.Fprintf(w, "commit-bytes(fanout)\t%d\n", m.CommitBytes)
 	_, _ = fmt.Fprintf(w, "max-SA-overlap(W+1)\t%d\n", m.MaxOverlap)
 	_, _ = fmt.Fprintf(w, "max-send-lag\t%d\n", m.MaxSendLag)
+	_, _ = fmt.Fprintf(w, "plaintext-handshake-exposures\t%d\n", m.PlaintextHandshakeExposures)
 	for _, op := range sortedStr(m.cpuCount) {
 		n := m.cpuCount[op]
 		avg := time.Duration(0)

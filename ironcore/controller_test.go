@@ -29,8 +29,9 @@ func pqSuite(t *testing.T) cipher.Suite {
 }
 
 // founderNode builds a 1-member founder Controller wrapping a fresh group.NewGroup.
-// The group is at epoch 0 with the founder at leaf 0.
-func founderNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering, resolve ironcore.KeyPackageResolver) *ironcore.Controller {
+// The group is at epoch 0 with the founder at leaf 0. An optional privacy argument
+// overrides the default HandshakePrivacy (HandshakeEncrypted) in the config.
+func founderNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering, resolve ironcore.KeyPackageResolver, privacy ...ironcore.HandshakePrivacy) *ironcore.Controller {
 	t.Helper()
 	signer := makeSigner(t)
 	cred := makeCred(name)
@@ -51,6 +52,9 @@ func founderNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq 
 		Lifetime:  lt,
 		Resolve:   resolve,
 	}
+	if len(privacy) > 0 {
+		cfg.HandshakePrivacy = privacy[0]
+	}
 	ctrl, err := ironcore.NewController(cfg, g)
 	if err != nil {
 		t.Fatalf("founderNode(%s): NewController: %v", name, err)
@@ -59,8 +63,9 @@ func founderNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq 
 }
 
 // mkNode builds a joiner Controller (g=nil) with a fresh KeyPackage ready for
-// being Added by the committer.
-func mkNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering, resolve ironcore.KeyPackageResolver) (ctrl *ironcore.Controller, kpMsg, initPriv, leafPriv []byte) {
+// being Added by the committer. An optional privacy argument overrides the
+// default HandshakePrivacy (HandshakeEncrypted) in the config.
+func mkNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group.Ordering, resolve ironcore.KeyPackageResolver, privacy ...ironcore.HandshakePrivacy) (ctrl *ironcore.Controller, kpMsg, initPriv, leafPriv []byte) {
 	t.Helper()
 	sk := makeSigner(t)
 	cred := makeCred(name)
@@ -75,6 +80,9 @@ func mkNode(t *testing.T, suite cipher.Suite, vni uint32, name string, seq group
 		Signer:    sk,
 		Lifetime:  lt,
 		Resolve:   resolve,
+	}
+	if len(privacy) > 0 {
+		cfg.HandshakePrivacy = privacy[0]
 	}
 	ctrl, err := ironcore.NewController(cfg, nil)
 	if err != nil {
@@ -295,6 +303,7 @@ func TestControllerSelfRemoval(t *testing.T) {
 	// Both should converge at epoch 1.
 	assertControllerConverged(t, "after-add", founder, joiner1)
 
+	// cfg0 uses the default (encrypted) HandshakePrivacy, so this Remove commit is a PrivateMessage that HandleCommit detects via Group.PeekCommit.
 	// Founder commits a Remove(node-1) via the underlying group directly.
 	joiner1Leaf := joiner1.Group().OwnLeaf()
 	removeCommit, _, err := founder.Group().Commit(group.CommitOptions{
@@ -601,6 +610,7 @@ func TestControllerHandover(t *testing.T) {
 	seq := sequencer.NewMemorySequencer()
 	ctx := context.Background()
 
+	// node-1 is the committer-elect in the handover.
 	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
 	node2, kpMsg2, initPriv2, leafPriv2 := mkNode(t, suite, testVNI, "node-2", seq, nil)
 

@@ -137,7 +137,7 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 		ContentType: framing.ContentTypeCommit,
 		Content:     commitBody,
 	}
-	confirmedInput, sig, err := framing.SignCommit(suite, signer, &gc, fc)
+	confirmedInput, sig, err := framing.SignCommit(suite, signer, &gc, fc, framing.WireFormatPublicMessage)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: ExternalCommit: SignCommit: %w", err)
 	}

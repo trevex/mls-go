@@ -102,12 +102,12 @@ func TestFramedContentRoundTripAddProposal(t *testing.T) {
 	}
 	// Build KeyPackage bytes manually: version(2) + cipher_suite(2) + init_key<V> + leaf_node(inline) + extensions<V> + signature<V>
 	kpBuilder := syntax.NewBuilder()
-	kpBuilder.WriteUint16(1)                   // version mls10
-	kpBuilder.WriteUint16(1)                   // cipher_suite 0x0001
-	kpBuilder.WriteOpaqueV([]byte{0xab, 0xcd}) // init_key
-	kpBuilder.WriteRaw(lnBytes)                // leaf_node inline
-	kpBuilder.WriteOpaqueV([]byte{})           // extensions<V> empty
-	kpBuilder.WriteOpaqueV([]byte{0xbe, 0xef}) // signature<V>
+	kpBuilder.WriteUint16(1)                       // version mls10
+	kpBuilder.WriteUint16(1)                       // cipher_suite 0x0001
+	_ = kpBuilder.WriteOpaqueV([]byte{0xab, 0xcd}) // init_key
+	kpBuilder.WriteRaw(lnBytes)                    // leaf_node inline
+	_ = kpBuilder.WriteOpaqueV([]byte{})           // extensions<V> empty
+	_ = kpBuilder.WriteOpaqueV([]byte{0xbe, 0xef}) // signature<V>
 	kpBytes := kpBuilder.Bytes()
 
 	// Build Add proposal: 0x0001 (ProposalType add) + KeyPackage inline

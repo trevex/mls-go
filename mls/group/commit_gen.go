@@ -146,7 +146,11 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 		Content:     commitBody,
 	}
 	gc := g.groupContext
-	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc, framing.WireFormatPublicMessage)
+	wf := framing.WireFormatPublicMessage
+	if g.encryptHandshakes {
+		wf = framing.WireFormatPrivateMessage
+	}
+	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc, wf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: Commit: SignCommit: %w", err)
 	}
@@ -186,15 +190,27 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	// Compute confirmation_tag.
 	confTag := keyschedule.ConfirmationTag(g.suite, es.ConfirmationKey, confirmed)
 
-	// Assemble the PublicMessage (adds membership_tag using gc_n / membership_key_n).
-	pubMsg, err := framing.AssembleCommitPublic(g.suite, &gc, g.epoch.MembershipKey, fc, sig, confTag)
-	if err != nil {
-		return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPublic: %w", err)
-	}
-	commitMLS := framing.MLSMessage{
-		Version:    tree.ProtocolVersionMLS10,
-		WireFormat: framing.WireFormatPublicMessage,
-		Public:     &pubMsg,
+	// Assemble the MLSMessage (PrivateMessage when encryptHandshakes, else PublicMessage).
+	// Frame under the CURRENT (epoch-n) secret tree + sender-data secret,
+	// BEFORE the atomic state swap below installs epoch n+1.
+	var commitMLS framing.MLSMessage
+	if wf == framing.WireFormatPrivateMessage {
+		var guard [4]byte
+		if _, err := rand.Read(guard[:]); err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: rand.Read(guard): %w", err)
+		}
+		privMsg, err := framing.AssembleCommitPrivate(g.suite, g.secretTree, g.epoch.SenderDataSecret, fc, g.handshakeGeneration, guard, 0, sig, confTag)
+		if err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPrivate: %w", err)
+		}
+		g.handshakeGeneration++
+		commitMLS = framing.MLSMessage{Version: tree.ProtocolVersionMLS10, WireFormat: framing.WireFormatPrivateMessage, Private: &privMsg}
+	} else {
+		pubMsg, err := framing.AssembleCommitPublic(g.suite, &gc, g.epoch.MembershipKey, fc, sig, confTag)
+		if err != nil {
+			return nil, nil, fmt.Errorf("group: Commit: AssembleCommitPublic: %w", err)
+		}
+		commitMLS = framing.MLSMessage{Version: tree.ProtocolVersionMLS10, WireFormat: framing.WireFormatPublicMessage, Public: &pubMsg}
 	}
 	commitBytes, err := commitMLS.MarshalMLS()
 	if err != nil {
@@ -255,6 +271,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	g.secretTree = st
 	g.resumptionPSKHistory[newGC.Epoch] = es.ResumptionPSK
 	g.appGeneration = 0
+	g.handshakeGeneration = 0
 	// Clear pending updates — committer always rekeys its own leaf via
 	// GenerateUpdatePath, so any pending updates from ProposeUpdate are moot.
 	g.pendingUpdates = map[string][]byte{}

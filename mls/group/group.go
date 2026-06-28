@@ -32,6 +32,13 @@ type Group struct {
 	// appGeneration is the per-epoch, per-sender monotonic counter for application
 	// messages (RFC 9420 §9.1). It is reset to 0 on every epoch change.
 	appGeneration uint32
+	// encryptHandshakes makes this member frame its OWN Commit/Proposal/Update as
+	// a PrivateMessage (RFC 9420 encrypt_handshake). Receive is always wire-format
+	// agnostic; this only affects outbound member handshakes. Default false.
+	encryptHandshakes bool
+	// handshakeGeneration is the per-epoch monotonic counter for the handshake
+	// ratchet (separate from appGeneration). Reset to 0 on every epoch change.
+	handshakeGeneration uint32
 	// pendingUpdates maps new-leaf-pubkey (string) → new-leaf-priv for Update
 	// proposals authored by this member but not yet committed.  ProcessCommit
 	// swaps the key into g.priv atomically, only after confirmation_tag verifies,
@@ -52,6 +59,24 @@ func (g *Group) GroupContext() keyschedule.GroupContext { return g.groupContext 
 
 // OwnLeaf returns the group member's own leaf index.
 func (g *Group) OwnLeaf() uint32 { return g.ownLeaf }
+
+// SetEncryptHandshakes selects whether this member frames its own outbound
+// handshakes (Commit/Proposal/Update) as encrypted PrivateMessages. Call it at
+// create/join time. It never affects the receive path (which dispatches on the
+// inbound wire format) nor external commits (always PublicMessage).
+func (g *Group) SetEncryptHandshakes(v bool) { g.encryptHandshakes = v }
+
+// sigPubByLeaf resolves a leaf index to its signature public key from the
+// ratchet tree (the verifier callback for UnprotectPrivate).
+//
+//nolint:unused // used by the receive path added in a later task
+func (g *Group) sigPubByLeaf(leaf uint32) ([]byte, error) {
+	ln, err := g.tree.LeafNodeAt(leaf)
+	if err != nil {
+		return nil, err
+	}
+	return ln.SignatureKey, nil
+}
 
 // Exporter derives an application secret (RFC 9420 §8.5) — feeds IronCore ESP SAs.
 func (g *Group) Exporter(label string, context []byte, length int) ([]byte, error) {

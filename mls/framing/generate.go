@@ -8,21 +8,25 @@ import (
 	"github.com/trevex/mls-go/mls/syntax"
 )
 
-// SignCommit signs FramedContentTBS for a PublicMessage commit and returns the
+// SignCommit signs FramedContentTBS for a commit and returns the
 // ConfirmedTranscriptHashInput (wire_format ‖ FramedContent ‖ signature<V>)
 // plus the signature (RFC 9420 §6.1 / §8.2).
+//
+// The wire_format is bound into both the signature TBS and the transcript
+// input, so the same FramedContent produces different confirmedInputs for
+// WireFormatPublicMessage versus WireFormatPrivateMessage.
 //
 // The confirmedInput is byte-identical to the input that
 // keyschedule.SplitAuthenticatedContent produces for the same commit: both are
 // the AuthenticatedContent bytes with the trailing confirmation_tag<V> field
 // removed.
-func SignCommit(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.GroupContext, fc FramedContent) (confirmedInput, signature []byte, err error) {
-	ac := AuthenticatedContent{WireFormat: WireFormatPublicMessage, Content: fc}
+func SignCommit(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.GroupContext, fc FramedContent, wf WireFormat) (confirmedInput, signature []byte, err error) {
+	ac := AuthenticatedContent{WireFormat: wf, Content: fc}
 	if err := ac.sign(suite, signer, gc); err != nil {
 		return nil, nil, err
 	}
 	b := syntax.NewBuilder()
-	b.WriteUint16(uint16(WireFormatPublicMessage))
+	b.WriteUint16(uint16(wf))
 	if err := fc.marshal(b); err != nil {
 		return nil, nil, err
 	}

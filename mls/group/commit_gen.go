@@ -146,7 +146,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 		Content:     commitBody,
 	}
 	gc := g.groupContext
-	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc)
+	confirmedInput, sig, err := framing.SignCommit(g.suite, g.signer, &gc, fc, framing.WireFormatPublicMessage)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: Commit: SignCommit: %w", err)
 	}

@@ -286,7 +286,7 @@ func resignExternalCommit(t *testing.T, suite cipher.Suite, signer crypto.Signer
 	}
 	fc := m.Public.Content
 	fc.Content = newBody
-	_, sig, err := framing.SignCommit(suite, signer, &gc, fc)
+	_, sig, err := framing.SignCommit(suite, signer, &gc, fc, framing.WireFormatPublicMessage)
 	if err != nil {
 		t.Fatalf("resign: SignCommit: %v", err)
 	}

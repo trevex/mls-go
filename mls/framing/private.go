@@ -169,23 +169,13 @@ func decodePrivateMessageContent(pt []byte, ct ContentType) ([]byte, FramedConte
 	return content, auth, nil
 }
 
-// ProtectPrivate encrypts fc as a PrivateMessage (RFC 9420 §6.3). The sender's
-// leaf index is taken from fc.Sender (must be a member). st provides the
-// content key/nonce at (leaf, ratchet, generation); senderDataSecret derives
-// the sender-data key/nonce. confirmationTag is used only for commit content.
-func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.GroupContext, st *keyschedule.SecretTree, senderDataSecret []byte, fc FramedContent, generation uint32, reuseGuard [4]byte, paddingSize int, confirmationTag []byte) (PrivateMessage, error) {
-	if fc.Sender.Type != SenderTypeMember {
-		return PrivateMessage{}, fmt.Errorf("framing: PrivateMessage requires a member sender, got %v", fc.Sender.Type)
-	}
-	// 1. Sign the content.
-	ac := AuthenticatedContent{WireFormat: WireFormatPrivateMessage, Content: fc}
-	if fc.ContentType == ContentTypeCommit {
-		ac.Auth.ConfirmationTag = confirmationTag
-	}
-	if err := ac.sign(suite, signer, gc); err != nil {
-		return PrivateMessage{}, err
-	}
-	// 2. Content AEAD with the ratchet key/nonce (guarded by reuse_guard).
+// sealPrivate performs the two AEAD steps of PrivateMessage construction
+// (RFC 9420 §6.3.1–§6.3.2): content encryption with the ratchet key/nonce
+// (guarded by reuse_guard), then sender-data encryption. The caller supplies
+// the already-built auth so this helper can be shared by ProtectPrivate and
+// AssembleCommitPrivate.
+func sealPrivate(suite cipher.Suite, st *keyschedule.SecretTree, senderDataSecret []byte, fc FramedContent, auth FramedContentAuthData, generation uint32, reuseGuard [4]byte, paddingSize int) (PrivateMessage, error) {
+	// 1. Content AEAD with the ratchet key/nonce (guarded by reuse_guard).
 	key, nonce, err := st.KeyNonce(fc.Sender.LeafIndex, ratchetTypeFor(fc.ContentType), generation)
 	if err != nil {
 		return PrivateMessage{}, err
@@ -194,7 +184,7 @@ func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.Gr
 	if err != nil {
 		return PrivateMessage{}, err
 	}
-	pt, err := privateMessageContent(fc, ac.Auth, paddingSize)
+	pt, err := privateMessageContent(fc, auth, paddingSize)
 	if err != nil {
 		return PrivateMessage{}, err
 	}
@@ -202,7 +192,7 @@ func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.Gr
 	if err != nil {
 		return PrivateMessage{}, err
 	}
-	// 3. Sender-data AEAD (key/nonce sampled from the content ciphertext).
+	// 2. Sender-data AEAD (key/nonce sampled from the content ciphertext).
 	sdKey, sdNonce, err := keyschedule.SenderDataKeyNonce(suite, senderDataSecret, ciphertext)
 	if err != nil {
 		return PrivateMessage{}, err
@@ -225,6 +215,36 @@ func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.Gr
 		EncryptedSenderData: encSD,
 		Ciphertext:          ciphertext,
 	}, nil
+}
+
+// ProtectPrivate encrypts fc as a PrivateMessage (RFC 9420 §6.3). The sender's
+// leaf index is taken from fc.Sender (must be a member). st provides the
+// content key/nonce at (leaf, ratchet, generation); senderDataSecret derives
+// the sender-data key/nonce. confirmationTag is used only for commit content.
+func ProtectPrivate(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.GroupContext, st *keyschedule.SecretTree, senderDataSecret []byte, fc FramedContent, generation uint32, reuseGuard [4]byte, paddingSize int, confirmationTag []byte) (PrivateMessage, error) {
+	if fc.Sender.Type != SenderTypeMember {
+		return PrivateMessage{}, fmt.Errorf("framing: PrivateMessage requires a member sender, got %v", fc.Sender.Type)
+	}
+	// 1. Sign the content.
+	ac := AuthenticatedContent{WireFormat: WireFormatPrivateMessage, Content: fc}
+	if fc.ContentType == ContentTypeCommit {
+		ac.Auth.ConfirmationTag = confirmationTag
+	}
+	if err := ac.sign(suite, signer, gc); err != nil {
+		return PrivateMessage{}, err
+	}
+	// 2–3. AEAD encrypt the content and sender data.
+	return sealPrivate(suite, st, senderDataSecret, fc, ac.Auth, generation, reuseGuard, paddingSize)
+}
+
+// AssembleCommitPrivate builds a PrivateMessage from a precomputed signature
+// and confirmation_tag, bypassing the signing step. The signature must already
+// be bound to WireFormatPrivateMessage (e.g. from SignCommit with that wire
+// format). This mirrors AssembleCommitPublic for the private wire format
+// (RFC 9420 §6.3).
+func AssembleCommitPrivate(suite cipher.Suite, st *keyschedule.SecretTree, senderDataSecret []byte, fc FramedContent, generation uint32, reuseGuard [4]byte, paddingSize int, signature, confTag []byte) (PrivateMessage, error) {
+	auth := FramedContentAuthData{Signature: signature, ConfirmationTag: confTag}
+	return sealPrivate(suite, st, senderDataSecret, fc, auth, generation, reuseGuard, paddingSize)
 }
 
 // UnprotectPrivate decrypts the sender data, then the content, reconstructs the

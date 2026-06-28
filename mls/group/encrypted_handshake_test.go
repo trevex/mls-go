@@ -11,6 +11,8 @@ import (
 	"github.com/trevex/mls-go/mls/cipher"
 	"github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // twoMemberGroup returns a committer (leaf 0) and a joiner (leaf 1) both at
@@ -202,35 +204,56 @@ func TestEncryptedCommitRoundTripAllSuites(t *testing.T) {
 	}
 }
 
-// TestWireFormatBindsTranscript asserts that a public commit and a private commit
-// produce different epoch_authenticators, proving the wire_format is bound into
-// the confirmed_transcript_hash.
+// TestWireFormatBindsTranscript proves that wire_format is bound into the
+// confirmed_transcript_hash by construction: the ONLY variable between the two
+// SignCommit calls is the wire_format (same commit content, same signer, same
+// prior interim hash).  Because independent random entropy is deliberately
+// absent, any equality would be a genuine failure of the binding property.
 func TestWireFormatBindsTranscript(t *testing.T) {
-	// Two independent two-member groups, same suite.
-	cPub, _ := twoMemberGroup(t)
-	cPriv, _ := twoMemberGroup(t)
+	suite, ok := cipher.Lookup(cipher.X25519_AES128GCM_SHA256_Ed25519)
+	if !ok {
+		t.Skip("suite 1 not registered")
+	}
 
-	// cPub commits publicly (default).
-	_, _, err := cPub.Commit(group.CommitOptions{})
+	// Same signer for both calls — Ed25519 is deterministic, so the only source
+	// of divergence between the two confirmedInputs is the wire_format itself.
+	signer := makeSigner(t)
+
+	gc := keyschedule.GroupContext{
+		Version:                 tree.ProtocolVersionMLS10,
+		CipherSuite:             cipher.X25519_AES128GCM_SHA256_Ed25519,
+		GroupID:                 []byte("wire-format-binding-test-group"),
+		Epoch:                   1,
+		TreeHash:                make([]byte, suite.HashLen()),
+		ConfirmedTranscriptHash: make([]byte, suite.HashLen()),
+	}
+	// Minimal well-formed commit: empty proposals<V> (0x00) + absent UpdatePath (0x00).
+	fc := framing.FramedContent{
+		GroupID:     gc.GroupID,
+		Epoch:       gc.Epoch,
+		Sender:      framing.Sender{Type: framing.SenderTypeMember, LeafIndex: 0},
+		ContentType: framing.ContentTypeCommit,
+		Content:     []byte{0x00, 0x00},
+	}
+
+	pubInput, _, err := framing.SignCommit(suite, signer, &gc, fc, framing.WireFormatPublicMessage)
 	if err != nil {
-		t.Fatalf("cPub.Commit (public): %v", err)
+		t.Fatalf("SignCommit(public): %v", err)
 	}
-
-	// cPriv commits privately.
-	cPriv.SetEncryptHandshakes(true)
-	_, _, err = cPriv.Commit(group.CommitOptions{})
+	privInput, _, err := framing.SignCommit(suite, signer, &gc, fc, framing.WireFormatPrivateMessage)
 	if err != nil {
-		t.Fatalf("cPriv.Commit (private): %v", err)
+		t.Fatalf("SignCommit(private): %v", err)
 	}
 
-	// The wire_format is bound into the transcript — the epoch_authenticators MUST differ.
-	if bytes.Equal(cPub.EpochAuthenticator(), cPriv.EpochAuthenticator()) {
-		t.Errorf("wire_format not bound in transcript: public and private epoch_authenticators are equal (%x)",
-			cPub.EpochAuthenticator())
-	} else {
-		t.Logf("wire_format correctly bound: public EA=%x, private EA=%x",
-			cPub.EpochAuthenticator(), cPriv.EpochAuthenticator())
+	// Same fixed interim hash for both — any difference in the resulting
+	// confirmed_transcript_hash is solely due to the wire_format binding.
+	interim := make([]byte, suite.HashLen())
+	pubHash := keyschedule.ConfirmedTranscriptHash(suite, interim, pubInput)
+	privHash := keyschedule.ConfirmedTranscriptHash(suite, interim, privInput)
+	if bytes.Equal(pubHash, privHash) {
+		t.Fatal("confirmed_transcript_hash identical across wire formats — wire_format not bound")
 	}
+	t.Logf("wire_format correctly bound in transcript: pubHash=%x privHash=%x", pubHash, privHash)
 }
 
 // TestEncryptedCommitTamperRejected verifies that a bit-flip in the commit

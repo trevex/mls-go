@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"fmt"
 	"testing"
 
 	"github.com/trevex/mls-go/mls/cipher"
@@ -173,7 +174,7 @@ func TestEncryptedCommitRoundTripAllSuites(t *testing.T) {
 	executed := 0
 	for _, csID := range suites {
 		csID := csID
-		t.Run("suite", func(t *testing.T) {
+		t.Run(fmt.Sprintf("suite-%#x", csID), func(t *testing.T) {
 			committer, member := twoMemberGroupSuite(t, csID)
 			executed++
 

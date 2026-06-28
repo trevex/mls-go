@@ -235,12 +235,14 @@ func (g *Group) authenticateCommit(m framing.MLSMessage) (framing.AuthenticatedC
 		if err != nil {
 			return framing.AuthenticatedContent{}, err
 		}
+		// Defense-in-depth: UnprotectPrivate currently always reconstructs the sender
+		// as a member; this guard fails closed should that ever change.
 		if ac.Content.Sender.Type != framing.SenderTypeMember {
-			return framing.AuthenticatedContent{}, errors.New("framing: external sender in PrivateMessage commit")
+			return framing.AuthenticatedContent{}, errors.New("authenticateCommit: external sender in PrivateMessage commit")
 		}
 		return ac, nil
 	default:
-		return framing.AuthenticatedContent{}, errors.New("group: ProcessCommit: unsupported commit wire format")
+		return framing.AuthenticatedContent{}, errors.New("authenticateCommit: unsupported commit wire format")
 	}
 }
 

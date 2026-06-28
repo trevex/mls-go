@@ -15,7 +15,7 @@ NIX_E2E ?= nix develop .#e2e -c
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test kat race vet fmt fmt-check conformance generate check-zero-dep e2e-openmls clean
+.PHONY: help test kat race vet fmt fmt-check conformance generate check-zero-dep e2e-openmls sim clean
 
 help: ## List available targets
 	@echo "mls-mlkem-go — make targets (all run inside the Nix dev shell):"
@@ -29,6 +29,10 @@ help: ## List available targets
 test: ## Run the root module test suite (go test ./...)
 	$(NIX) go test ./...
 
+sim: ## Run the MetalNet dual-redundancy simulation suite (5 scenarios + CLI smoke)
+	$(NIX) go test ./sim/...
+	$(NIX) go run ./cmd/metalsim -scenario all
+
 kat: ## Run the official MLS Known-Answer Tests (RFC 9420 test vectors)
 	$(NIX) go test ./mls/... -run KAT -v
 
@@ -39,11 +43,11 @@ vet: ## Run go vet on the root module
 	$(NIX) go vet ./...
 
 fmt: ## Format all Go sources in place (gofmt -w)
-	$(NIX) gofmt -w mls ironcore
+	$(NIX) gofmt -w mls ironcore sim cmd
 	$(NIX) bash -c 'cd interop && gofmt -w cmd server *.go'
 
 fmt-check: ## Fail if any Go source is not gofmt-clean
-	$(NIX) bash -c 'out=$$(gofmt -l mls ironcore interop); if [ -n "$$out" ]; then echo "not gofmt-clean:"; echo "$$out"; exit 1; fi'
+	$(NIX) bash -c 'out=$$(gofmt -l mls ironcore sim cmd interop); if [ -n "$$out" ]; then echo "not gofmt-clean:"; echo "$$out"; exit 1; fi'
 
 conformance: ## Run the gRPC interop conformance gate (interop module)
 	$(NIX) bash -c 'cd interop && go test ./...'

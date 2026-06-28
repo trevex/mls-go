@@ -1,9 +1,6 @@
 package sim
 
-import (
-	"math/rand"
-	"sort"
-)
+import "math/rand"
 
 const (
 	faultPartition faultKind = iota
@@ -97,14 +94,4 @@ func (f *faultState) liftAll() {
 		f.dsDown[k] = false
 	}
 	f.cfg.DropProb = 0
-}
-
-// sortedActors returns a stable, sorted copy (determinism: never range a map directly).
-func sortedActors(m map[ActorID]bool) []ActorID {
-	out := make([]ActorID, 0, len(m))
-	for a := range m {
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
 }

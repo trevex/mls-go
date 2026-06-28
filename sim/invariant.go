@@ -11,12 +11,12 @@ import (
 //
 //	(1) per-replica convergence (live members agree on EpochAuthenticator + SA key)
 //	(2) data-plane zero key-loss (every non-dropped data packet decryptable) — the headline
-//	(3) liveness (laggards/partitioned catch up both replicas by settle)
-//	(4) membership correctness per replica
+//	(3) membership correctness per replica (liveness is folded in: a member that did
+//	    not catch up will be absent from the live set and trigger a membership failure)
 //
 // There is NO "no-permanent-fork" invariant: a single reflector ordering a group
 // via its own accept-once register is a true total order, so no replica ever forks.
-// Inv. 2 is checked continuously (packetLoss); 1/3/4 at quiescence (Evaluate).
+// Inv. 2 is checked continuously (packetLoss); 1/3 at quiescence (Evaluate).
 type InvariantChecker struct {
 	lossEvents []LossEvent
 }
@@ -31,11 +31,6 @@ type LossEvent struct {
 
 func newInvariantChecker() *InvariantChecker { return &InvariantChecker{} }
 
-// reportAuth is retained as a hook for the convergence accounting but, with no
-// forks possible, needs no cross-member registry — convergence is asserted
-// directly over live members at settle (Evaluate).
-func (k *InvariantChecker) reportAuth(_ uint32, _ uint64, _ []byte) {}
-
 func (k *InvariantChecker) packetLoss(vni, sentEpoch, recvEpoch, at uint64) {
 	k.lossEvents = append(k.lossEvents, LossEvent{vni32(vni), sentEpoch, recvEpoch, at})
 }
@@ -45,14 +40,13 @@ type Result struct {
 	InvariantsHeld bool
 	Divergence     []string    // inv. 1 failures (per-replica convergence)
 	Fork           []string    // always nil in this model (no forks) — kept for report shape
-	Liveness       []string    // inv. 3 failures
-	Membership     []string    // inv. 4 failures
+	Membership     []string    // inv. 3 failures (membership; liveness folded in)
 	PacketLoss     []LossEvent // inv. 2 failures
 	Metrics        *Metrics
 	Trace          []string
 }
 
-// Evaluate runs inv. 1/3/4 at quiescence over the live clients (per replica
+// Evaluate runs inv. 1/3 at quiescence over the live clients (per replica
 // channel) and folds in the continuously-collected inv. 2 events.
 func (k *InvariantChecker) Evaluate(clients []*Client, intended map[uint32]map[string]bool) Result {
 	r := Result{InvariantsHeld: true, PacketLoss: k.lossEvents}
@@ -100,7 +94,7 @@ func (k *InvariantChecker) Evaluate(clients []*Client, intended map[uint32]map[s
 			}
 		}
 	}
-	// inv. 4 (membership) + inv. 3 (liveness): the live set per replica channel
+	// inv. 3 (membership / liveness folded in): the live set per replica channel
 	// matches the intended set after churn settles.
 	for _, ch := range sortedIntendedKeys(intended) {
 		want := intended[ch]

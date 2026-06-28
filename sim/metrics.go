@@ -45,7 +45,7 @@ func (m *Metrics) cpu(op string, d time.Duration) {
 
 func (m *Metrics) commitFanout(vni uint32, size, nDS int) {
 	_ = vni
-	m.CommitMsgs += nDS // dual-peering ~doubles fan-out
+	m.CommitMsgs += nDS // each replica peers a single reflector (nDS=1 per call)
 	m.CommitBytes += size * nDS
 }
 

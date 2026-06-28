@@ -255,7 +255,6 @@ func (c *Client) onCommit(env Envelope) {
 	switch {
 	case err == nil:
 		c.cacheCurrentSA(env.VNI)
-		c.reportAuth(env.VNI)
 		c.initPeerEpochForNewMembers(env.VNI, before)
 	case isSelfRemoved(err):
 		c.leaveVNI(env.VNI)
@@ -277,7 +276,6 @@ func (c *Client) onWelcome(env Envelope) {
 	st.joined = true
 	st.joinEpoch = st.ctrl.Epoch()
 	c.cacheCurrentSA(env.VNI)
-	c.reportAuth(env.VNI)
 	// Announce our join epoch immediately so senders learn we exist on this replica.
 	c.emitHeartbeat(env.VNI)
 	// Conservatively seed peerEpoch for existing members at joinEpoch-1 (they may
@@ -342,18 +340,12 @@ func (c *Client) onLogReply(env Envelope) {
 		before := c.leafIdentitySet(env.VNI)
 		if err := st.ctrl.HandleCommit(r.Bytes); err == nil {
 			c.cacheCurrentSA(env.VNI)
-			c.reportAuth(env.VNI)
 			c.initPeerEpochForNewMembers(env.VNI, before)
 		} else if isSelfRemoved(err) {
 			c.leaveVNI(env.VNI)
 			return
 		}
 	}
-}
-
-func (c *Client) reportAuth(ch uint32) {
-	st := c.vnis[ch]
-	c.checker.reportAuth(ch, st.ctrl.Epoch(), st.ctrl.Group().EpochAuthenticator())
 }
 
 func (c *Client) leaveVNI(ch uint32) {

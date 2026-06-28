@@ -1,10 +1,6 @@
 package sim
 
-import (
-	"crypto/sha256"
-	"encoding/binary"
-	"fmt"
-)
+import "crypto/sha256"
 
 // ActorID identifies an actor in the simulation. Clients are 0..C-1; the two
 // DS reflectors are C and C+1. -1 means "broadcast to all VNI subscribers".
@@ -85,7 +81,6 @@ const (
 	TimerHeartbeat                  // client emits a heartbeat
 	TimerReconcile                  // committer reconciles desired vs current
 	TimerData                       // a tenant data packet is generated
-	TimerCatchup                    // client retries catch-up
 	TimerDSRestart                  // a downed DS restarts
 )
 
@@ -125,16 +120,3 @@ func contentHash(b []byte) string {
 	h := sha256.Sum256(b)
 	return string(h[:])
 }
-
-// vniKey encodes (vni, epoch) into a collision-free map key.
-func vniKey(vni uint32, epoch uint64) string {
-	b := make([]byte, 12)
-	binary.BigEndian.PutUint32(b[:4], vni)
-	binary.BigEndian.PutUint64(b[4:], epoch)
-	return string(b)
-}
-
-// CommitRef mirrors group.CommitRef for sim-local fork bookkeeping.
-type CommitRef = []byte
-
-var _ = fmt.Sprintf

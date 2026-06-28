@@ -3,6 +3,8 @@
 
 # Build outputs
 /interop/mls-interop
+/metalsim
+/cmd/metalsim/metalsim
 *.out
 *.test
 

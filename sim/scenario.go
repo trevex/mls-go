@@ -62,6 +62,11 @@ func Drops() Scenario {
 // DSDown: reflector R0 stops mid-run then restarts → replica 0 stalls. The
 // redundancy headline: replica 1's SA carries all data (ZERO loss) while R0 is
 // down; replica 0 catches up on R0's return.
+//
+// This scenario demonstrates graceful-freeze-with-no-loss: R0 going down causes
+// replica-0 to cleanly stall (no new commits), data keeps decrypting on the
+// still-valid replica-0 SAs (within the W window) and on replica-1.  For
+// active cross-replica failover under a live partition see PartitionRecover.
 func DSDown() Scenario {
 	s := base("ds_down", 5, 2)
 	s.Churn = churnPlan(5, 2)
@@ -131,8 +136,8 @@ func churnPlan(clients, vnis int) []ChurnOp {
 // failureSummary formats a Result for test output.
 func failureSummary(r Result) string {
 	return fmt.Sprintf(
-		"divergence=%v liveness=%v membership=%v packetLoss=%d dataSent=%d dataDecryptable=%d",
-		r.Divergence, r.Liveness, r.Membership, len(r.PacketLoss),
+		"divergence=%v membership=%v packetLoss=%d dataSent=%d dataDecryptable=%d",
+		r.Divergence, r.Membership, len(r.PacketLoss),
 		r.Metrics.DataSent, r.Metrics.DataDecryptable,
 	)
 }

@@ -78,11 +78,7 @@ func printOne(name string, r sim.Result, jsonOutput, verbose bool) {
 		fmt.Printf("    ! %s\n", d)
 	}
 	fmt.Printf("  packet-loss (inv.2):  %d events\n", len(r.PacketLoss))
-	fmt.Printf("  liveness    (inv.3):  %d failures\n", len(r.Liveness))
-	for _, l := range r.Liveness {
-		fmt.Printf("    ! %s\n", l)
-	}
-	fmt.Printf("  membership  (inv.4):  %d failures\n", len(r.Membership))
+	fmt.Printf("  membership  (inv.3):  %d failures\n", len(r.Membership))
 	for _, m := range r.Membership {
 		fmt.Printf("    ! %s\n", m)
 	}

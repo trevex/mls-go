@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // TestFencingSafety is the §5.5 fencing safety gate (N4, 6-step mapping):

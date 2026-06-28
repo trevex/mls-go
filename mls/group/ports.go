@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // GroupID identifies a group on the delivery service (opaque to mls/).

@@ -1,6 +1,6 @@
 package keyschedule
 
-import "github.com/trevex/mls-mlkem-go/mls/cipher"
+import "github.com/trevex/mls-go/mls/cipher"
 
 // EpochSecrets holds the secrets derived from one epoch of the key schedule
 // (RFC 9420 §8). InitSecret is init_secret_[n], the input to the *next* epoch.

@@ -3,7 +3,7 @@ package tree
 import (
 	"crypto"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // NewRatchetTree builds a single-leaf tree holding leaf at index 0 (group

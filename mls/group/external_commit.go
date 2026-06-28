@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // ExternalCommit lets a non-member join an existing group without a Welcome

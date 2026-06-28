@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"errors"
 
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // ProtectApplication encrypts plaintext as an application PrivateMessage from

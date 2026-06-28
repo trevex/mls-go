@@ -1,4 +1,4 @@
-# mls-mlkem-go
+# mls-go
 
 **A zero-dependency Go implementation of MLS (RFC 9420) with a post-quantum
 X-Wing (X25519 + ML-KEM-768) hybrid suite, built to drive IronCore per-VNI key
@@ -58,13 +58,13 @@ cmd/metalsim/   ← CLI runner for the simulation (-scenario all | <name> -seed 
 
 | Layer | Module | Dependencies | Purpose |
 |---|---|---|---|
-| `mls/…` | `github.com/trevex/mls-mlkem-go` | **stdlib only** | The RFC 9420 MLS engine |
+| `mls/…` | `github.com/trevex/mls-go` | **stdlib only** | The RFC 9420 MLS engine |
 | `ironcore`, `ironcore/sequencer` | same root module | **stdlib only** | IronCore per-VNI integration + ordering |
 | `sim`, `cmd/metalsim` | same root module | **stdlib only** | Deterministic metalnet/metalbond simulation |
-| `interop/…` | `github.com/trevex/mls-mlkem-go/interop` (nested, `replace ../`) | grpc + protobuf | Conformance harness only |
+| `interop/…` | `github.com/trevex/mls-go/interop` (nested, `replace ../`) | grpc + protobuf | Conformance harness only |
 
 **The zero-dependency rule.** The root module
-(`github.com/trevex/mls-mlkem-go`) has **no `require` block** and pulls in **no
+(`github.com/trevex/mls-go`) has **no `require` block** and pulls in **no
 third-party packages** — only the Go standard library. Every dependency
 (gRPC, protobuf) lives exclusively in the nested `interop/` module, which
 `replace`s the root locally. This is enforced by
@@ -211,7 +211,7 @@ guide).
 
 - MLS+IronCore design spec, including the **§5 DS-ordering / failover
   correctness proof** (single-linearization-point, B1 fencing, fork detection):
-  [`docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md`](docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md).
+  [`docs/superpowers/specs/2026-06-26-mls-go-design.md`](docs/superpowers/specs/2026-06-26-mls-go-design.md).
 - Simulation design spec (dual-group pure redundancy):
   [`docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md`](docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md).
 - Implementation roadmap (16 plans):

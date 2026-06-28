@@ -20,8 +20,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/interop/server"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/interop/server"
 )
 
 func main() {

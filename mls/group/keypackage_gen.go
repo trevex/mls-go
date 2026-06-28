@@ -3,8 +3,8 @@ package group
 import (
 	"crypto"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // NewKeyPackage generates an init key, a leaf HPKE key, a signed key_package

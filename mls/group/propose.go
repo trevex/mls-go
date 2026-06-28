@@ -1,8 +1,8 @@
 package group
 
 import (
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // ProposeAdd builds a bare Add proposal from a received KeyPackage

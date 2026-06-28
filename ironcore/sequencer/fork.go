@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"sync"
 
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // EpochAuthenticatorRegistry records the epoch_authenticator(s) reported for each

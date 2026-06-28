@@ -4,7 +4,7 @@
 
 **Goal:** Ship a gRPC **interop conformance harness** for the MLS (RFC 9420) engine that implements the official `mls_client.proto` `MLSClient` service over our group engine, plus a self-conformance Go test that drives two/three participants *through the gRPC API* (bufconn) across the standard scenarios (1:1 welcome-join, 3-party join, Add/Update/Remove, Protect→Unprotect, Export equality, external-join) and asserts `StateAuth` (epoch-authenticator) equality at every step. The deliverable also makes the server runnable against the official `mls-implementations` test-runner (and OpenMLS / mls-rs).
 
-**Architecture:** The core library `github.com/trevex/mls-mlkem-go` is **stdlib-only / zero third-party dependencies and MUST STAY THAT WAY**. The harness therefore lives in a **separate NESTED Go module** at `interop/` (module path `github.com/trevex/mls-mlkem-go/interop`) that (a) `require`s `google.golang.org/grpc` + `google.golang.org/protobuf`, and (b) depends on the core via `replace github.com/trevex/mls-mlkem-go => ../`, building against the working tree. The root `go.mod` is **never touched**; `go list -deps ./mls/... ./ironcore/...` continues to show no grpc/protobuf. The generated protobuf stubs are **committed** so the harness builds without re-running `protoc`; regeneration is a documented `//go:generate` + `justfile`/README command using the Nix-provided `protoc`.
+**Architecture:** The core library `github.com/trevex/mls-go` is **stdlib-only / zero third-party dependencies and MUST STAY THAT WAY**. The harness therefore lives in a **separate NESTED Go module** at `interop/` (module path `github.com/trevex/mls-go/interop`) that (a) `require`s `google.golang.org/grpc` + `google.golang.org/protobuf`, and (b) depends on the core via `replace github.com/trevex/mls-go => ../`, building against the working tree. The root `go.mod` is **never touched**; `go list -deps ./mls/... ./ironcore/...` continues to show no grpc/protobuf. The generated protobuf stubs are **committed** so the harness builds without re-running `protoc`; regeneration is a documented `//go:generate` + `justfile`/README command using the Nix-provided `protoc`.
 
 The server holds a `map[uint32]*state` of opaque group handles (proto uses `uint32` `state_id` / `transaction_id`). Each RPC either maps to an engine call or returns `status.Errorf(codes.Unimplemented, …)`. Unsupported RPCs are obtained for free by embedding the generated `UnimplementedMLSClientServer`.
 
@@ -18,7 +18,7 @@ The server holds a `map[uint32]*state` of opaque group handles (proto uses `uint
 
 - **Module downloads work** in this env (`GOPROXY=https://proxy.golang.org,direct`, `GOTOOLCHAIN=local`). `go get google.golang.org/grpc` succeeds.
 - **Nix toolchain works**: `nix shell nixpkgs#protobuf nixpkgs#protoc-gen-go nixpkgs#protoc-gen-go-grpc -c protoc …` → `libprotoc 32.1`, `protoc-gen-go 1.36.10`, `protoc-gen-go-grpc 1.5.1`. Go is `1.26.4` via `nix develop`.
-- **Stubs generated + compiled**: with the vendored proto's `go_package` overridden to `github.com/trevex/mls-mlkem-go/interop/proto/mlspb;mlspb` and `paths=source_relative`, `protoc` emits `mls_client.pb.go` + `mls_client_grpc.pb.go`; both compile in the nested module. The generated server interface embeds `UnimplementedMLSClientServer` (every method has a default `Unimplemented` impl) and `RegisterMLSClientServer(s grpc.ServiceRegistrar, srv MLSClientServer)` exists.
+- **Stubs generated + compiled**: with the vendored proto's `go_package` overridden to `github.com/trevex/mls-go/interop/proto/mlspb;mlspb` and `paths=source_relative`, `protoc` emits `mls_client.pb.go` + `mls_client_grpc.pb.go`; both compile in the nested module. The generated server interface embeds `UnimplementedMLSClientServer` (every method has a default `Unimplemented` impl) and `RegisterMLSClientServer(s grpc.ServiceRegistrar, srv MLSClientServer)` exists.
 - **bufconn server call returns**: a minimal `MLSClientServer` embedding `UnimplementedMLSClientServer` with real `CreateGroup`/`StateAuth` builds and answers over a `bufconn` in-memory listener via `grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(...))`.
 - **2-state convergence through gRPC PASSES** (the gate): `CreateGroup(alice)` → `CreateKeyPackage(bob)` → `Commit(by_value Add bob)` → `HandlePendingCommit(alice)` → `JoinGroup(bob, welcome)` → `StateAuth` byte-equal, under **suite 0x0001** *and* **suite 0xF001 (X-Wing)**. Converged epoch authenticators reproduced over the real gRPC stubs.
 - **Core stays zero-dep**: `go list -deps ./mls/... ./ironcore/...` lists no third-party packages (only stdlib + own module). The nested module + `replace` guarantees grpc/protobuf never enter the root module graph.
@@ -62,7 +62,7 @@ Signer construction (server-side; the proto's `CreateGroup`/`CreateKeyPackage` p
 
 | RPC | Status | Mapping / reason |
 |---|---|---|
-| `Name` | ✅ | returns `"mls-mlkem-go"` |
+| `Name` | ✅ | returns `"mls-go"` |
 | `SupportedCiphersuites` | ✅ | `{0x0001, 0x0002}` (0xF001 omitted: private-use, self-interop only) |
 | `CreateGroup` | ✅ | `NewGroup`; rejects `encrypt_handshake=true` (engine handshakes are PublicMessage) |
 | `CreateKeyPackage` | ✅ | gen signer + `NewKeyPackage` + `EncodeKeyPackageMessage`; stores privs under `transaction_id` |
@@ -101,7 +101,7 @@ The proto model is: `Commit` returns the commit+welcome **without advancing the 
 
 | File | Change | Responsibility |
 |---|---|---|
-| `interop/go.mod` | Create | Nested module `…/interop`; `require` grpc + protobuf; `replace …/mls-mlkem-go => ../` |
+| `interop/go.mod` | Create | Nested module `…/interop`; `require` grpc + protobuf; `replace …/mls-go => ../` |
 | `interop/go.sum` | Create | Checksums (via `go mod tidy`) |
 | `interop/proto/mls_client.proto` | Create | Vendored upstream proto, `go_package` overridden to `…/interop/proto/mlspb;mlspb` |
 | `interop/proto/mlspb/mls_client.pb.go` | Create (generated, committed) | Message types |
@@ -122,7 +122,7 @@ The proto model is: `Commit` returns the commit+welcome **without advancing the 
 
 1. **Vendor** `mls_client.proto` into `interop/proto/`, changing only the `go_package` line:
    ```
-   option go_package = "github.com/trevex/mls-mlkem-go/interop/proto/mlspb;mlspb";
+   option go_package = "github.com/trevex/mls-go/interop/proto/mlspb;mlspb";
    ```
 2. **Generate** with the Nix-provided toolchain (plugins must be on PATH; the `nix shell` line below makes them available; once `flake.nix` is updated, `nix develop` provides them too):
    ```sh
@@ -146,9 +146,9 @@ package proto
 
 ## How the nested module keeps the core zero-dep
 
-- Root `go.mod` (`module github.com/trevex/mls-mlkem-go`, `go 1.26.4`) has **no `require` block** and is not edited by this plan.
+- Root `go.mod` (`module github.com/trevex/mls-go`, `go 1.26.4`) has **no `require` block** and is not edited by this plan.
 - `interop/go.mod` is a *separate module*; its `require google.golang.org/grpc …` and `google.golang.org/protobuf …` live only in the interop module graph.
-- `replace github.com/trevex/mls-mlkem-go => ../` makes the harness compile against the working-tree engine without publishing.
+- `replace github.com/trevex/mls-go => ../` makes the harness compile against the working-tree engine without publishing.
 - Verification (Definition of Done): `nix develop -c go list -deps ./mls/... ./ironcore/...` from the repo root prints no `google.golang.org/...` package; `nix develop -c go vet ./...` at the root is unaffected by the nested module (Go treats `interop/` as a distinct module and excludes it from root `./...`).
 
 ---
@@ -163,13 +163,13 @@ package proto
 ### Task 2 — Nested module + vendored proto
 - [ ] Create `interop/go.mod`:
   ```
-  module github.com/trevex/mls-mlkem-go/interop
+  module github.com/trevex/mls-go/interop
 
   go 1.26.4
 
-  require github.com/trevex/mls-mlkem-go v0.0.0
+  require github.com/trevex/mls-go v0.0.0
 
-  replace github.com/trevex/mls-mlkem-go => ../
+  replace github.com/trevex/mls-go => ../
   ```
 - [ ] Vendor `interop/proto/mls_client.proto` (upstream content, `go_package` overridden as above).
 - [ ] Add `interop/proto/gen.go` (the `//go:generate` form).
@@ -227,10 +227,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 type state struct {
@@ -318,7 +318,7 @@ func (st *state) resolveIdentity(identity []byte) (uint32, error) {
 }
 
 func (s *Server) Name(_ context.Context, _ *pb.NameRequest) (*pb.NameResponse, error) {
-	return &pb.NameResponse{Name: "mls-mlkem-go"}, nil
+	return &pb.NameResponse{Name: "mls-go"}, nil
 }
 
 func (s *Server) SupportedCiphersuites(_ context.Context, _ *pb.SupportedCiphersuitesRequest) (*pb.SupportedCiphersuitesResponse, error) {
@@ -651,8 +651,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/interop/server"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/interop/server"
 )
 
 func main() {
@@ -688,9 +688,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/interop/server"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/interop/server"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func dial(t *testing.T) (pb.MLSClientClient, func()) {

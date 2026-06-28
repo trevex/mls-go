@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/trevex/mls-mlkem-go/interop/proto/mlspb;mlspb";
+option go_package = "github.com/trevex/mls-go/interop/proto/mlspb;mlspb";
 
 package mls_client;
 

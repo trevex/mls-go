@@ -3,8 +3,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // SenderDataKeyNonce derives the sender-data AEAD key and nonce (RFC 9420 §9.1):

@@ -3,8 +3,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // PSKType designates how a PSK was provisioned (RFC 9420 §8.4).

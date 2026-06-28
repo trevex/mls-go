@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/interop/server"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/interop/server"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // dial starts a fresh gRPC server backed by a bufconn listener and returns

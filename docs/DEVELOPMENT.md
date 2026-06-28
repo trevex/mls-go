@@ -1,4 +1,4 @@
-# Developing mls-mlkem-go
+# Developing mls-go
 
 This is the contributor guide. For the project overview and feature matrix, see
 the [README](../README.md).
@@ -53,10 +53,10 @@ wrapper: `make test NIX=`.
 
 ## The zero-dependency rule
 
-The root module `github.com/trevex/mls-mlkem-go` (everything under `mls/` and
+The root module `github.com/trevex/mls-go` (everything under `mls/` and
 `ironcore/`) is **standard-library only**. `go.mod` has **no `require` block**.
 All third-party dependencies (gRPC, protobuf) live in the **separate nested
-module** under `interop/` (`github.com/trevex/mls-mlkem-go/interop`), which
+module** under `interop/` (`github.com/trevex/mls-go/interop`), which
 `replace`s the root with `../`.
 
 When adding code under `mls/` or `ironcore/`, do not import anything outside the
@@ -213,7 +213,7 @@ accordingly.
 - **MLS+IronCore design spec** — including the **§5 DS-ordering / failover
   correctness proof** (the single-linearization-point argument, B1 fencing, fork
   detection) and its 2026-06-28 metalbond refinement:
-  [`superpowers/specs/2026-06-26-mls-mlkem-go-design.md`](superpowers/specs/2026-06-26-mls-mlkem-go-design.md).
+  [`superpowers/specs/2026-06-26-mls-go-design.md`](superpowers/specs/2026-06-26-mls-go-design.md).
 - **Simulation design spec** (dual-group pure redundancy):
   [`superpowers/specs/2026-06-28-metalnet-simulation-design.md`](superpowers/specs/2026-06-28-metalnet-simulation-design.md).
 - **Implementation plans** (15): [`docs/superpowers/plans/`](superpowers/plans/).

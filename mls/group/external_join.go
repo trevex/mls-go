@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // PublishGroupInfo builds a signed GroupInfo for the current epoch, carrying the

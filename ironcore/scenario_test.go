@@ -5,8 +5,8 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // TestMultiNodeVNIScenario is the IronCore integration gate (design spec

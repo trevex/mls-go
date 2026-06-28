@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // Compile-time interface-satisfaction checks: both adapters must implement

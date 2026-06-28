@@ -2,7 +2,7 @@
 
 - **Status:** Implemented — dual-group pure redundancy
 - **Date:** 2026-06-28
-- **Repo:** `github.com/trevex/mls-mlkem-go`
+- **Repo:** `github.com/trevex/mls-go`
 - **Context:** The library provides the MLS+PQC engine and the IronCore integration (`ironcore`: VNI groups, ESP SA derivation, the `Controller` membership orchestrator, `RecoverViaExternalCommit`, `CanonicalCommit`, `EpochAuthenticatorRegistry`, and `ironcore/sequencer` ordering primitives). This spec describes the **deterministic, in-memory simulation harness** (`sim/` + `cmd/metalsim/`) that drives the *real* library to model how it behaves in metalnet — two MetalBond reflectors, N metalnet hosts, M VNIs — under reflector failure, packet drops, and partitions. It is primarily a **fault-injection property test** that a resilience property holds, with metrics as secondary output.
 
 The honest framing: this is a deterministic *model*, not a production deployment. What it validates is a specific, falsifiable property — **zero tenant-data-plane packet loss under reflector failure/partition** — against the actual library code, reproducibly by seed.

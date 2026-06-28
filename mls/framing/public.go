@@ -5,9 +5,9 @@ import (
 	"crypto/hmac"
 	"errors"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // PublicMessage is an integrity-protected (signed, MAC'd) framed message

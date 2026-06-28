@@ -6,7 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // buildSigner constructs a crypto.Signer from the vector's raw signature_priv.

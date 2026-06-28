@@ -5,9 +5,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // TestSplitBrainForkDetected is the §5.2/§5.3/§5.6 integration gate.

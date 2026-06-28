@@ -650,10 +650,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // optimisticOrdering is the AP "no register" adapter (design spec §7 / N1).
@@ -1183,9 +1183,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // InvariantChecker evaluates the §3.5 invariants. inv. 5 is checked continuously
@@ -1457,10 +1457,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // fixedClock is an inert injectable clock (lifetimes are infinite; time never
@@ -1694,7 +1694,7 @@ func Run(sc Scenario, seed int64) Result {
 ```go
 package sim
 
-import "github.com/trevex/mls-mlkem-go/mls/cipher"
+import "github.com/trevex/mls-go/mls/cipher"
 
 // Scenario is a built-in simulation profile (design spec §4).
 type Scenario struct {
@@ -1801,7 +1801,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/trevex/mls-mlkem-go/sim"
+	"github.com/trevex/mls-go/sim"
 )
 
 func main() {

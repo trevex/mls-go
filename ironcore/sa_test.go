@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // ─── local test helpers ───────────────────────────────────────────────────────

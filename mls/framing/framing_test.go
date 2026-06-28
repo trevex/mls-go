@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 func TestFramedContentRoundTripProposal(t *testing.T) {

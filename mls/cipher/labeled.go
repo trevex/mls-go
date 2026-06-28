@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // mlsLabelPrefix is prepended to every label per RFC 9420 §5.

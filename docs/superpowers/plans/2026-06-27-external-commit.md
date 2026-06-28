@@ -20,9 +20,9 @@
 - **RFC 9420 §8.3 (External Initialization)** — the new epoch's `init_secret` for an external commit is injected via an `ExternalInit` proposal: the group derives `external_priv, external_pub = KEM.DeriveKeyPair(external_secret)` from the current epoch's `external_secret`; the joiner computes `kem_output, init_secret = KEM.Encap(external_pub)` and ships `kem_output` in the `ExternalInit` proposal; every existing member computes `init_secret = KEM.Decap(kem_output, external_priv)`. This `init_secret` **replaces** the previous epoch's `init_secret` as the salt fed to `joiner_secret = ExpandWithLabel(Extract(init_secret, commit_secret), "joiner", GroupContext, Nh)`. (`KEM.Encap`/`KEM.Decap` are the suite's KEM — RFC 9180 §4 DHKEM for `0x0001`/`0x0002`, **X-Wing** (draft-connolly-cfrg-xwing-kem) for `0xF001`; in all cases the shared secret is `Nsecret = 32` bytes and is used **verbatim** — no MLS label.)
 - **RFC 9420 §12.4.3.2 (Joining via External Commits)** — an external Commit is sent as a `PublicMessage` with sender type **`new_member_commit`**; it **MUST** contain **exactly one `ExternalInit`** proposal; it **MUST** include a **`path`** (UpdatePath); aside from the `ExternalInit`, the only proposals it may carry are **`Remove`** (to remove a *prior appearance of the joiner* — anti-double-join — the removed leaf's identity must match the joiner) and **`PreSharedKey`**, and (per §12.4.3) `GroupContextExtensions` may also appear; it **MUST NOT** contain any proposal **by reference** (a non-member cannot validate group-internal proposals); its signature is verified with the **signature key in the LeafNode of the Commit's `path`** (§6.1, since the committer is not yet in the tree).
 - **RFC 9420 §12.4.3.1 (GroupInfo)** + **§17.3** — the joiner gets the group state from a signed `GroupInfo`; the `ratchet_tree` extension (`0x0002`) carries the tree; the **`external_pub` extension (`0x0004`)** carries `external_pub` for the current epoch.
-- **Design spec §5.6** (`docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md`): *"a stale/losing member re-converges via external Commit + signed GroupInfo (§12.4.3.1–2) under a fixed tie-break rule = lowest `Hash(Commit)`. The external Commit also passes through the single linearization point (§5.5) — otherwise the recovery itself forks."* Also §5.2 (transcript chaining ⇒ forks are detectable via distinct `epoch_authenticator`s), §5.5 (single linearization point), §10.2 (sequencer holds no secrets).
+- **Design spec §5.6** (`docs/superpowers/specs/2026-06-26-mls-go-design.md`): *"a stale/losing member re-converges via external Commit + signed GroupInfo (§12.4.3.1–2) under a fixed tie-break rule = lowest `Hash(Commit)`. The external Commit also passes through the single linearization point (§5.5) — otherwise the recovery itself forks."* Also §5.2 (transcript chaining ⇒ forks are detectable via distinct `epoch_authenticator`s), §5.5 (single linearization point), §10.2 (sequencer holds no secrets).
 
-> **Go invocation convention:** Go is **not** on `PATH`. Every Go command runs through the nix devshell from the **repo root**, e.g. `nix develop -c go test github.com/trevex/mls-mlkem-go/mls/group`. Expect a harmless `Entered Go dev shell: …` banner (and possibly `warning: Git tree … is dirty`) on stderr. `cd` into a subdir is unnecessary and breaks relative `./...` after the devshell `cd` — always use the full module path. Format/vet/test gate: `nix develop -c sh -c 'gofmt -l mls ironcore && go vet ./... && go test ./...'`.
+> **Go invocation convention:** Go is **not** on `PATH`. Every Go command runs through the nix devshell from the **repo root**, e.g. `nix develop -c go test github.com/trevex/mls-go/mls/group`. Expect a harmless `Entered Go dev shell: …` banner (and possibly `warning: Git tree … is dirty`) on stderr. `cd` into a subdir is unnecessary and breaks relative `./...` after the devshell `cd` — always use the full module path. Format/vet/test gate: `nix develop -c sh -c 'gofmt -l mls ironcore && go vet ./... && go test ./...'`.
 
 ---
 
@@ -169,7 +169,7 @@ Confirmed: `mls/testdata/` has no external-commit vector; `passive-client-random
 - [ ] **Implement `mls/cipher/xwing.go`** (the raw X-Wing KEM — see N1b skeleton below): `xwingEncap`/`xwingDecap`/`xwingCombiner`/`xwingExpandSeed`, composing `crypto/mlkem`+`crypto/ecdh`+`crypto/sha3`. **Write `mls/cipher/xwing_test.go` first** (red): SHAKE256(seed,96) reconstruction matches stdlib pk_M/pk_X; `xwingEncap`→`xwingDecap` round-trips the 32-byte secret over many random `DeriveKeyPair` keypairs.
 - [ ] **Write `mls/cipher/extinit_test.go` first** (red): assert `ExternalInitEncap`/`ExternalInitDecap` reproduce the RFC 9180 §A.1.1 + §A.3.1 vectors (DHKEM) **and** round-trip across **all** registered suites including `0xF001` (X-Wing).
 - [ ] **Implement `mls/cipher/extinit.go`** (green): `ExternalInitEncap`/`ExternalInitDecap` dispatch on the KEM (`s.curve != nil` → DHKEM; `s.kem.ID() == xwingKEMID` → X-Wing; else `errExternalInitUnsupported`), plus `DeriveExternalInitKeyPair` (Option A: just `s.DeriveKeyPair` for every suite — see note).
-- [ ] Gate: `nix develop -c go test github.com/trevex/mls-mlkem-go/mls/cipher -run 'TestExternalInit|TestXWing' -v`.
+- [ ] Gate: `nix develop -c go test github.com/trevex/mls-go/mls/cipher -run 'TestExternalInit|TestXWing' -v`.
 
 > **`DeriveExternalInitKeyPair(externalSecret) (priv, pub, err)`** is, under **Option A**, byte-for-byte `s.DeriveKeyPair(externalSecret)` for **every** suite (DHKEM and X-Wing alike): DHKEM keeps today's behavior (KAT-validated by `key-schedule.json`); X-Wing's stdlib seed/pub are parseable by `xwingDecap`/`xwingEncap`, so no divergent keygen is needed. Add it as a thin, well-documented wrapper so the group/keyschedule layer has an intention-revealing name. **The external PRIV is already exposed** via the existing `keyschedule.ExternalPub(suite, externalSecret) (priv, pub, err)` — members call it to get the 32-byte X-Wing seed (or DHKEM priv) for `ExternalInitDecap`; no new keyschedule function is required (optionally add a `keyschedule.ExternalInitKeyPair` alias for symmetry).
 
@@ -587,10 +587,10 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, signer crypto.Signer, lifetime tree.Lifetime) (*Group, []byte, error) {
@@ -801,10 +801,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // RecoverViaExternalCommit re-converges a stale/losing VNIGroup onto the

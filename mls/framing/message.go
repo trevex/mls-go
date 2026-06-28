@@ -3,8 +3,8 @@ package framing
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // MLSMessage is the top-level wire envelope (RFC 9420 §6). Exactly one body

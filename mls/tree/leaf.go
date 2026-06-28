@@ -3,8 +3,8 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ProtocolVersion is the 2-byte MLS protocol version (RFC 9420 §6).

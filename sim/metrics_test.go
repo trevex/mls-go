@@ -63,10 +63,8 @@ func TestMetricsDeterministic(t *testing.T) {
 	build := func() *Metrics {
 		m := newMetrics()
 		m.Delivered = 100
-		m.Forks = 3
-		m.Recoveries = 3
 		m.cpu("Rekey", time.Millisecond)
-		m.cpu("AutoRecover", 2*time.Millisecond)
+		m.cpu("HandleCommit", 2*time.Millisecond)
 		m.cpu("Rekey", 500*time.Microsecond)
 		return m
 	}

@@ -13,11 +13,9 @@ func TestRunNominalConverges(t *testing.T) {
 }
 
 func TestDeterminism(t *testing.T) {
-	// Use Nominal (no forks, no CanonicalCommit-dependent branching) so the event
-	// structure is determined entirely by the seeded scheduler RNG, not by HPKE
-	// randomness in commit bytes. SplitBrain cannot be byte-identical across runs
-	// because HPKE-randomised commit hashes affect which CanonicalCommit branch
-	// is chosen and therefore how many recovery events fire.
+	// Same seed ⇒ byte-identical run: the event structure is determined entirely
+	// by the seeded scheduler RNG. The dual single-sequencer model has no forks and
+	// no HPKE-randomness-dependent branching, so every scenario replays identically.
 	r1 := Run(Nominal(), 7)
 	r2 := Run(Nominal(), 7)
 	if len(r1.Trace) != len(r2.Trace) {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"sort"
 
-	"github.com/trevex/mls-mlkem-go/ironcore"
-	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/ironcore"
+	"github.com/trevex/mls-go/ironcore/sequencer"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // DS is one MetalBond reflector R_r ordering replica r of every VNI (design spec

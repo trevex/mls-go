@@ -1,4 +1,4 @@
-# mls-mlkem-go interop harness
+# mls-go interop harness
 
 gRPC conformance harness for the MLS (RFC 9420) engine, implementing the
 official [`MLSClient` service](https://github.com/mlswg/mls-implementations/blob/main/interop/proto/mls_client.proto).
@@ -6,7 +6,7 @@ official [`MLSClient` service](https://github.com/mlswg/mls-implementations/blob
 ## Module layout
 
 ```
-interop/           ← nested Go module (github.com/trevex/mls-mlkem-go/interop)
+interop/           ← nested Go module (github.com/trevex/mls-go/interop)
   cmd/mls-interop/ ← standalone gRPC server binary
   proto/           ← vendored mls_client.proto + committed generated stubs
   proto/mlspb/     ← generated Go bindings (mls_client.pb.go, mls_client_grpc.pb.go)
@@ -14,7 +14,7 @@ interop/           ← nested Go module (github.com/trevex/mls-mlkem-go/interop)
   conformance_test.go ← in-process self-conformance gate (the gate)
 ```
 
-The root module (`github.com/trevex/mls-mlkem-go`) remains **stdlib-only**;
+The root module (`github.com/trevex/mls-go`) remains **stdlib-only**;
 all gRPC / protobuf dependencies are scoped to this nested module.
 
 ## Self-conformance test (the gate)

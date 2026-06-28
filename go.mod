@@ -1,3 +1,3 @@
-module github.com/trevex/mls-mlkem-go
+module github.com/trevex/mls-go
 
 go 1.26.4

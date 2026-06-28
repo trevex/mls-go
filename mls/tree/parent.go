@@ -3,7 +3,7 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ParentNode is an interior ratchet-tree node (RFC 9420 §7.1).

@@ -1,4 +1,4 @@
-# Makefile for mls-mlkem-go
+# Makefile for mls-go
 #
 # Every target wraps its command in the Nix dev shell so it works from a bare
 # shell where Go is not on PATH. If you'd rather not pay the wrapper cost on
@@ -18,7 +18,7 @@ NIX_E2E ?= nix develop .#e2e -c
 .PHONY: help test kat race vet fmt fmt-check lint conformance generate check-zero-dep e2e-openmls sim clean
 
 help: ## List available targets
-	@echo "mls-mlkem-go — make targets (all run inside the Nix dev shell):"
+	@echo "mls-go — make targets (all run inside the Nix dev shell):"
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | sort \

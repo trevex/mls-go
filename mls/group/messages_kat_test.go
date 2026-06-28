@@ -14,13 +14,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/framing"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/framing"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 type messagesCase struct {

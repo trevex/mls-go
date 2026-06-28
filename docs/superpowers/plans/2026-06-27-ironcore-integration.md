@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 standard library only (hard constraint). `ironcore/` uses `bytes`, `encoding/binary`, `fmt`, `crypto/ecdsa`, `crypto/ed25519`, `crypto/elliptic`, `crypto/x509`, `net/url` (all stdlib; `crypto/x509` + `net/url` are explicitly permitted for the credential adapters). It builds on `mls/cipher` (`Lookup`, `Suite.ExpandWithLabel`, `CipherSuite`), `mls/group` (`Group`, `CredentialValidator`, `NewGroup`/`NewKeyPackage`/`Commit`/`ProcessCommit`/`JoinFromWelcome`/`Protect`/`Unprotect`, the proposal constructors), and `mls/tree` (`Credential`, `Certificate`, `CredentialTypeX509`). Task 0 stays inside `mls/group` and `mls/tree`, stdlib-only.
 
-**Spec reference:** Design spec `docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md` §3 (two-layer arch), §4 (the four ports + `CredentialValidator`), §8 (identity: one x509 SVID end-to-end; pluggable validators; authz hook in metalnet), §10.1 (VNI↔GroupID), §10.3 (membership controller flow), §10.4 (exporter→ESP-SA + per-sender GCM nonce separation), §10.5 (scale). RFC 9420 §5.1.3/§5.2 (labeled derivation), §8/§8.5 (key schedule + `MLS-Exporter`), §12.1.2/§12.3/§12.4 (Update proposals, application order, Commit). RFC 9750 §5 (DS untrusted for confidentiality). RFC 4106 (AES-GCM-ESP: 4-byte salt + 8-byte IV → 12-byte nonce), RFC 4303 §2.1 (ESP SPI range; values 1..255 reserved).
+**Spec reference:** Design spec `docs/superpowers/specs/2026-06-26-mls-go-design.md` §3 (two-layer arch), §4 (the four ports + `CredentialValidator`), §8 (identity: one x509 SVID end-to-end; pluggable validators; authz hook in metalnet), §10.1 (VNI↔GroupID), §10.3 (membership controller flow), §10.4 (exporter→ESP-SA + per-sender GCM nonce separation), §10.5 (scale). RFC 9420 §5.1.3/§5.2 (labeled derivation), §8/§8.5 (key schedule + `MLS-Exporter`), §12.1.2/§12.3/§12.4 (Update proposals, application order, Commit). RFC 9750 §5 (DS untrusted for confidentiality). RFC 4106 (AES-GCM-ESP: 4-byte salt + 8-byte IV → 12-byte nonce), RFC 4303 §2.1 (ESP SPI range; values 1..255 reserved).
 
 > **Go invocation convention:** Go is **not** on `PATH`. Every Go command runs through the nix devshell, e.g. `nix develop -c go test ./ironcore/`. Use this form everywhere below. Expect a `warning: Git tree '…' is dirty` line and a `Entered Go dev shell: …` banner on stderr — both are harmless.
 
@@ -388,7 +388,7 @@ This transitively proves the X-Wing suite, the exporter, the SA derivation, and 
 | `ironcore/scenario_test.go` | **new** (Task 5) | Multi-node VNI gate under `0xF001` (N5). |
 | `ironcore/testhelpers_test.go` | **new** (Task 5) | Shared test builders (signers, basic/x509 creds, N-node group construction). |
 
-No `go.mod` change (same module `github.com/trevex/mls-mlkem-go`, Go 1.26.4, stdlib-only).
+No `go.mod` change (same module `github.com/trevex/mls-go`, Go 1.26.4, stdlib-only).
 
 ---
 

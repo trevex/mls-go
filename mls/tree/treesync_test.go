@@ -3,7 +3,7 @@ package tree
 import (
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func eqU32(a, b []uint32) bool {

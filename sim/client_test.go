@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // ─── shared harness ───────────────────────────────────────────────────────────

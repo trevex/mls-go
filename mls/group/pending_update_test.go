@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // pendingUpdateSuites exercises both the standard suite and the X-Wing PQ suite.

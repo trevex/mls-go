@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // Lease is a time-bounded ownership grant for one VNI, carrying a strictly

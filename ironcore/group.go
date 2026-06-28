@@ -1,6 +1,6 @@
 package ironcore
 
-import "github.com/trevex/mls-mlkem-go/mls/group"
+import "github.com/trevex/mls-go/mls/group"
 
 // VNIGroup is a thin handle pairing a VNI with its *group.Group (design spec §10.1).
 // It is the home for DeriveSA and the VNI-scoped GroupID. Membership-controller

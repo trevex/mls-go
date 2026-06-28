@@ -5,7 +5,7 @@ import (
 	"crypto"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // CommitSecret derives the commit secret from the topmost path secret of an

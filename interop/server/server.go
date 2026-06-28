@@ -14,10 +14,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/trevex/mls-mlkem-go/interop/proto/mlspb"
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	pb "github.com/trevex/mls-go/interop/proto/mlspb"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 type state struct {
@@ -109,7 +109,7 @@ func (st *state) resolveIdentity(identity []byte) (uint32, error) {
 }
 
 func (s *Server) Name(_ context.Context, _ *pb.NameRequest) (*pb.NameResponse, error) {
-	return &pb.NameResponse{Name: "mls-mlkem-go"}, nil
+	return &pb.NameResponse{Name: "mls-go"}, nil
 }
 
 func (s *Server) SupportedCiphersuites(_ context.Context, _ *pb.SupportedCiphersuitesRequest) (*pb.SupportedCiphersuitesResponse, error) {

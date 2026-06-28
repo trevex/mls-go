@@ -1,6 +1,6 @@
 package tree
 
-import "github.com/trevex/mls-mlkem-go/mls/syntax"
+import "github.com/trevex/mls-go/mls/syntax"
 
 // Resolution returns the resolution of node index i as a list of node indices
 // (RFC 9420 §4.1.1).

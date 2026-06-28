@@ -3,8 +3,8 @@ package syntax_test
 import (
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 type deserCase struct {

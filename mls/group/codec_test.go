@@ -5,9 +5,9 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // minimalLeafNode returns a minimal key_package-source LeafNode for tests.

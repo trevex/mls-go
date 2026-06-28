@@ -1,5 +1,5 @@
 {
-  description = "Go development environment for mls-mlkem-go";
+  description = "Go development environment for mls-go";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";

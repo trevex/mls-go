@@ -3,8 +3,8 @@ package group_test
 import (
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/group"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/group"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 func TestPorts_BasicCredentialValidator(t *testing.T) {

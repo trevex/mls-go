@@ -166,7 +166,7 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // CredentialType is the 2-byte MLS credential type (RFC 9420 §5.3).
@@ -303,7 +303,7 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func sampleCapabilities() Capabilities {
@@ -409,8 +409,8 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ProtocolVersion is the 2-byte MLS protocol version (RFC 9420 §6).
@@ -782,7 +782,7 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ParentNode is an interior ratchet-tree node (RFC 9420 §7.1).
@@ -879,8 +879,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 func testLeaf(id byte) *LeafNode {
@@ -967,8 +967,8 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // NodeType discriminates a populated ratchet-tree node (RFC 9420 §7.8/§12.4.3.1).
@@ -1125,7 +1125,7 @@ package tree
 import (
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func eqU32(a, b []uint32) bool {
@@ -1174,7 +1174,7 @@ func TestResolutionFigure10(t *testing.T) {
 ```go
 package tree
 
-import "github.com/trevex/mls-mlkem-go/mls/syntax"
+import "github.com/trevex/mls-go/mls/syntax"
 
 // Resolution returns the resolution of node index i as a list of node indices
 // (RFC 9420 §4.1.1).
@@ -1275,7 +1275,7 @@ func TestTreeHashExceptEmptyEqualsPlain(t *testing.T) {
 
 - [ ] **Step 2: Run to verify it fails.** `nix develop -c go test ./mls/tree/` → FAIL (`tr.TreeHash undefined`).
 
-- [ ] **Step 3: Implement in `mls/tree/treesync.go`** (ensure `import "github.com/trevex/mls-mlkem-go/mls/syntax"` is present):
+- [ ] **Step 3: Implement in `mls/tree/treesync.go`** (ensure `import "github.com/trevex/mls-go/mls/syntax"` is present):
 
 ```go
 // TreeHash returns the tree hash of the subtree rooted at node index i
@@ -1384,7 +1384,7 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // Build a clean 2-leaf tree where the committer's leaf (index 0, node 0) and
@@ -1484,7 +1484,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // leafSet builds a set of leaf indices.
@@ -1687,9 +1687,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 type treeValidationCase struct {

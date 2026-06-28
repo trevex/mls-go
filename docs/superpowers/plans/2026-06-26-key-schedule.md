@@ -350,7 +350,7 @@ func TestExtensionExportedCodec(t *testing.T) {
 	}
 }
 ```
-(Ensure `leaf_test.go` imports `"github.com/trevex/mls-mlkem-go/mls/syntax"`.)
+(Ensure `leaf_test.go` imports `"github.com/trevex/mls-go/mls/syntax"`.)
 
 - [ ] **Step 2: Run to verify it fails.** `nix develop -c go test ./mls/tree/ -run TestExtensionExportedCodec` → FAIL (`in.MarshalTo undefined`).
 
@@ -387,8 +387,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 func hx(t *testing.T, s string) []byte {
@@ -469,9 +469,9 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // GroupContext summarizes the group state hashed into the key schedule
@@ -587,8 +587,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 func TestPreSharedKeyIDExternalRoundTrip(t *testing.T) {
@@ -657,9 +657,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/keyschedule"
 )
 
 type pskKATEntry struct {
@@ -724,8 +724,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // PSKType designates how a PSK was provisioned (RFC 9420 §8.4).
@@ -889,8 +889,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 func TestDeriveEpochSecretsEpoch0(t *testing.T) {
@@ -964,10 +964,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 type ksExporter struct {
@@ -1088,7 +1088,7 @@ func TestKeyScheduleKAT(t *testing.T) {
 ```go
 package keyschedule
 
-import "github.com/trevex/mls-mlkem-go/mls/cipher"
+import "github.com/trevex/mls-go/mls/cipher"
 
 // EpochSecrets holds the secrets derived from one epoch of the key schedule
 // (RFC 9420 §8). InitSecret is init_secret_[n], the input to the *next* epoch.
@@ -1209,7 +1209,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func TestSenderDataKeyNonce(t *testing.T) {
@@ -1263,9 +1263,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/keyschedule"
 )
 
 type stSenderData struct {
@@ -1352,8 +1352,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // SenderDataKeyNonce derives the sender-data AEAD key and nonce (RFC 9420 §9.1):
@@ -1500,9 +1500,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/keyschedule"
 )
 
 type thCase struct {
@@ -1565,8 +1565,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ConfirmationTag computes a Commit's confirmation MAC (RFC 9420 §6.1):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-zero-dep.sh — verifies that the root mls-mlkem-go module has no
+# check-zero-dep.sh — verifies that the root mls-go module has no
 # third-party Go dependencies and that both the root and interop modules
 # pass `go vet` and `go test`.
 #
@@ -25,7 +25,7 @@ echo ""
 echo "=== 2. go list -deps ./mls/... ./ironcore/... — no third-party packages ==="
 THIRD_PARTY=$(go list -deps ./mls/... ./ironcore/... 2>&1 \
   | grep "\." \
-  | grep -v "^github\.com/trevex/mls-mlkem-go" \
+  | grep -v "^github\.com/trevex/mls-go" \
   | grep -v "^golang\.org/x/crypto" \
   | grep -v "^golang\.org/x/sys/cpu" \
   | grep -v "^vendor/" \

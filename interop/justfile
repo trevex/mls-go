@@ -1,4 +1,4 @@
-# justfile for the mls-mlkem-go interop harness
+# justfile for the mls-go interop harness
 # Requires: just, nix (for the Go + protoc toolchain via `nix develop`)
 #
 # Usage from the repo root:

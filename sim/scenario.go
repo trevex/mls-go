@@ -3,7 +3,7 @@ package sim
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 // Scenario is a built-in simulation profile (dual-group pure redundancy, rev 5 §0).

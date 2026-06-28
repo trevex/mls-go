@@ -1,6 +1,6 @@
 package group
 
-import "github.com/trevex/mls-mlkem-go/mls/tree"
+import "github.com/trevex/mls-go/mls/tree"
 
 // ActiveLeaves returns the ascending list of non-blank leaf indices in the
 // current ratchet tree. The first element (if any) is the lowest active leaf —

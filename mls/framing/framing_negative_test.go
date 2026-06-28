@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/keyschedule"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/keyschedule"
+	"github.com/trevex/mls-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // u16be returns the big-endian encoding of v, used to build raw proposal /

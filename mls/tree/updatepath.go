@@ -3,7 +3,7 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // HPKECiphertext is an HPKE KEM output paired with an AEAD ciphertext

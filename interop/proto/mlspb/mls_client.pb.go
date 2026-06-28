@@ -3471,7 +3471,7 @@ const file_mls_client_proto_rawDesc = "" +
 	"\x14CreateExternalSigner\x12'.mls_client.CreateExternalSignerRequest\x1a(.mls_client.CreateExternalSignerResponse\"\x00\x12Y\n" +
 	"\x11AddExternalSigner\x12$.mls_client.AddExternalSignerRequest\x1a\x1c.mls_client.ProposalResponse\"\x00\x12c\n" +
 	"\x16ExternalSignerProposal\x12).mls_client.ExternalSignerProposalRequest\x1a\x1c.mls_client.ProposalResponse\"\x00\x12;\n" +
-	"\x04Free\x12\x17.mls_client.FreeRequest\x1a\x18.mls_client.FreeResponse\"\x00B:Z8github.com/trevex/mls-mlkem-go/interop/proto/mlspb;mlspbb\x06proto3"
+	"\x04Free\x12\x17.mls_client.FreeRequest\x1a\x18.mls_client.FreeResponse\"\x00B4Z2github.com/trevex/mls-go/interop/proto/mlspb;mlspbb\x06proto3"
 
 var (
 	file_mls_client_proto_rawDescOnce sync.Once

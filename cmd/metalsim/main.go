@@ -15,7 +15,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/trevex/mls-mlkem-go/sim"
+	"github.com/trevex/mls-go/sim"
 )
 
 func main() {

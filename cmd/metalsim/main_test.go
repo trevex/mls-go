@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/sim"
+	"github.com/trevex/mls-go/sim"
 )
 
 // withDiscardedStdout runs fn with os.Stdout pointed at /dev/null so the CLI's

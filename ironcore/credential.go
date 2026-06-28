@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // Authorizer answers "is identity entitled to participate in vni?" The policy

@@ -3,8 +3,8 @@ package tree
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // NodeType discriminates a populated ratchet-tree node (RFC 9420 §7.8/§12.4.3.1).

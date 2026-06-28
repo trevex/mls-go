@@ -3,8 +3,8 @@ package keyschedule
 import (
 	"fmt"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // ConfirmationTag computes a Commit's confirmation MAC (RFC 9420 §6.1):

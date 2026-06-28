@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 standard library only — `crypto/hpke` (new in 1.26: `DHKEM`, `MLKEM768X25519`, `HKDFSHA256`, `AES128GCM`, `AES256GCM`, `NewSender`/`NewRecipient`), `crypto/ecdh`, building on Plan 1's `mls/syntax` and `mls/cipher`.
 
-**Spec reference:** `docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md` §7 (PQC posture: X-Wing via stdlib; EncryptWithLabel mapping), §6 (conformance: hybrid suite has no official KAT → self round-trip).
+**Spec reference:** `docs/superpowers/specs/2026-06-26-mls-go-design.md` §7 (PQC posture: X-Wing via stdlib; EncryptWithLabel mapping), §6 (conformance: hybrid suite has no official KAT → self round-trip).
 
 ---
 
@@ -56,7 +56,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func TestEncryptDecryptWithLabelRoundTrip(t *testing.T) {
@@ -347,7 +347,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/cipher"
 )
 
 func TestXWingSuiteRoundTrip(t *testing.T) {

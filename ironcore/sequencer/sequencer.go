@@ -10,7 +10,7 @@ import (
 	"encoding/binary"
 	"sync"
 
-	"github.com/trevex/mls-mlkem-go/mls/group"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 // seqKey encodes (group, epoch) into a collision-free map key: an 8-byte

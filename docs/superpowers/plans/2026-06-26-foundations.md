@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26 standard library only (`crypto/sha256`, `crypto/sha512`, `crypto/hmac`, `crypto/hkdf`, `crypto/ed25519`, `crypto/ecdsa`, `encoding/json`, `encoding/hex`). No third-party dependencies in this plan; HPKE/KEM and the hybrid PQC suite arrive in Plan 2.
 
-**Spec reference:** `docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md` §6 (conformance), §7 (crypto). RFC 9420 §2.1.2 (varints), §4.1.2 (tree math), §5.1–5.2 (labeled crypto), §7.1 (DeriveTreeSecret).
+**Spec reference:** `docs/superpowers/specs/2026-06-26-mls-go-design.md` §6 (conformance), §7 (crypto). RFC 9420 §2.1.2 (varints), §4.1.2 (tree math), §5.1–5.2 (labeled crypto), §7.1 (DeriveTreeSecret).
 
 ---
 
@@ -263,8 +263,8 @@ package syntax_test
 import (
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 type deserCase struct {
@@ -491,8 +491,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
-	"github.com/trevex/mls-mlkem-go/mls/tree"
+	"github.com/trevex/mls-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/tree"
 )
 
 // nodeRef models a JSON element that is either a node index or null.
@@ -849,7 +849,7 @@ import (
 	"crypto"
 	"encoding/binary"
 
-	"github.com/trevex/mls-mlkem-go/mls/syntax"
+	"github.com/trevex/mls-go/mls/syntax"
 )
 
 // mlsLabelPrefix is prepended to every label per RFC 9420 §5.
@@ -955,8 +955,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trevex/mls-mlkem-go/mls/cipher"
-	"github.com/trevex/mls-mlkem-go/mls/internal/katutil"
+	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/internal/katutil"
 )
 
 type refHashVec struct {

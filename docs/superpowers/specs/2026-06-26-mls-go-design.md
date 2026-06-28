@@ -1,8 +1,8 @@
-# mls-mlkem-go — Design Spec
+# mls-go — Design Spec
 
 - **Status:** Draft for review
 - **Date:** 2026-06-26
-- **Repo:** `github.com/trevex/mls-mlkem-go`
+- **Repo:** `github.com/trevex/mls-go`
 - **Context:** IronCore underlay-encryption enhancement ([ironcore-dev/enhancements#38](https://github.com/ironcore-dev/enhancements/pull/38)). That proposal encrypts tenant traffic between dpservice instances with IPsec ESP over IPv6, and distributes **rotating ephemeral hybrid (X25519 + ML-KEM-768) public keys over metalbond**, deriving per-VNI keys via HKDF. This library replaces that ad-hoc per-VNI key agreement with **MLS (RFC 9420)** used as a group key-agreement protocol, where **one MLS group = one VNI**.
 
 ---
@@ -39,7 +39,7 @@
 ## 3. Architecture — two layers in one repo (Approach C)
 
 ```
-github.com/trevex/mls-mlkem-go
+github.com/trevex/mls-go
 ├── mls/        # domain-agnostic RFC 9420 engine + PQC. The auditable crypto heart.
 │              # Knows nothing about VNIs, ESP, metalbond.
 │              # Exposes four ports (interfaces): DeliveryService, CredentialValidator,

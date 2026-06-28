@@ -53,15 +53,15 @@ const (
 
 // ControllerConfig configures one VNI's membership controller.
 type ControllerConfig struct {
-	VNI      uint32
-	Suite    cipher.Suite
-	Ordering group.Ordering            // the single linearization point
-	Clock    group.Clock               // injectable; the controller never reads wall-clock
+	VNI       uint32
+	Suite     cipher.Suite
+	Ordering  group.Ordering            // the single linearization point
+	Clock     group.Clock               // injectable; the controller never reads wall-clock
 	Validator group.CredentialValidator // AS: maps a leaf credential → verified identity
-	Cred     tree.Credential           // this node's own credential
-	Signer   crypto.Signer             // this node's own signing key
-	Lifetime tree.Lifetime             // KeyPackage lifetime for our external-commit/join leaves
-	Resolve  KeyPackageResolver        // resolves desired identities → published KeyPackages
+	Cred      tree.Credential           // this node's own credential
+	Signer    crypto.Signer             // this node's own signing key
+	Lifetime  tree.Lifetime             // KeyPackage lifetime for our external-commit/join leaves
+	Resolve   KeyPackageResolver        // resolves desired identities → published KeyPackages
 
 	// HandshakePrivacy selects PrivateMessage (default) vs PublicMessage framing
 	// for this VNI's member handshakes. Zero value = HandshakeEncrypted.
@@ -471,6 +471,8 @@ func (c *Controller) identityToLeaf() (map[string]uint32, error) {
 // PrivateMessage) contains a by-value Remove of this node's own leaf. It uses
 // Group.PeekCommit to authenticate and parse the commit regardless of framing.
 // Returns false for any parse error or non-member commit.
+// NOTE: only by-value Remove proposals embedded directly in the Commit are
+// inspected; by-reference Removes are not detected here.
 func (c *Controller) commitRemovesSelf(commitMsg []byte) bool {
 	cm, err := c.g.PeekCommit(commitMsg)
 	if err != nil {

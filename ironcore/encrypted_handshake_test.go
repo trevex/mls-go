@@ -58,6 +58,55 @@ func TestControllerDefaultEncryptsMemberCommit(t *testing.T) {
 	t.Logf("TestControllerDefaultEncryptsMemberCommit: commit is WireFormatPrivateMessage as expected")
 }
 
+// TestControllerPlaintextProducesPublicCommit verifies that a VNI whose
+// ControllerConfig carries HandshakePlaintext frames its outbound member commits
+// as WireFormatPublicMessage — the opt-out path from the default PrivateMessage
+// framing. Exercises the variadic privacy parameter of founderNode.
+func TestControllerPlaintextProducesPublicCommit(t *testing.T) {
+	suite := pqSuite(t)
+	seq := sequencer.NewMemorySequencer()
+	ctx := context.Background()
+
+	// Build joiner material.
+	joiner, kpMsg, initPriv, leafPriv := mkNode(t, suite, testVNI, "node-1", seq, nil)
+
+	// Build founder with HandshakePlaintext via the variadic founderNode helper.
+	resolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {
+		if string(identity) == "node-1" {
+			return kpMsg, true
+		}
+		return nil, false
+	})
+	founder := founderNode(t, suite, testVNI, "node-0", seq, resolver, ironcore.HandshakePlaintext)
+
+	// Reconcile adds node-1.
+	desired := [][]byte{[]byte("node-0"), []byte("node-1")}
+	result, err := founder.Reconcile(ctx, desired)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !result.Committed || !result.Won {
+		t.Fatalf("Reconcile: Committed=%v Won=%v, want both true", result.Committed, result.Won)
+	}
+
+	// Joiner joins via Welcome.
+	if err := joiner.JoinViaWelcome(result.WelcomeMsg, kpMsg, initPriv, leafPriv); err != nil {
+		t.Fatalf("JoinViaWelcome: %v", err)
+	}
+
+	// The commit produced by a HandshakePlaintext controller MUST be
+	// WireFormatPublicMessage — the opt-out from the encrypted default.
+	var m framing.MLSMessage
+	if err := m.UnmarshalMLS(result.CommitMsg); err != nil {
+		t.Fatalf("UnmarshalMLS(CommitMsg): %v", err)
+	}
+	if m.WireFormat != framing.WireFormatPublicMessage {
+		t.Fatalf("commit WireFormat = %v, want WireFormatPublicMessage (HandshakePlaintext opt-out)",
+			m.WireFormat)
+	}
+	t.Logf("TestControllerPlaintextProducesPublicCommit: commit is WireFormatPublicMessage as expected")
+}
+
 // TestRecoveryCommitStaysPublic verifies that AutoRecover always produces a
 // PublicMessage external commit with SenderTypeNewMemberCommit — RFC 9420
 // §12.4.3 — regardless of the VNI's HandshakePrivacy setting.

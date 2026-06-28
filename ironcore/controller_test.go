@@ -303,6 +303,7 @@ func TestControllerSelfRemoval(t *testing.T) {
 	// Both should converge at epoch 1.
 	assertControllerConverged(t, "after-add", founder, joiner1)
 
+	// cfg0 uses the default (encrypted) HandshakePrivacy, so this Remove commit is a PrivateMessage that HandleCommit detects via Group.PeekCommit.
 	// Founder commits a Remove(node-1) via the underlying group directly.
 	joiner1Leaf := joiner1.Group().OwnLeaf()
 	removeCommit, _, err := founder.Group().Commit(group.CommitOptions{

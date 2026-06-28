@@ -73,8 +73,12 @@ func newSigner(cs cipher.CipherSuite) (crypto.Signer, []byte, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		raw := make([]byte, 32)
-		sk.D.FillBytes(raw)
+		// Bytes() returns the raw fixed-size big-endian P-256 scalar (32 bytes),
+		// byte-identical to the deprecated sk.D.FillBytes(make([]byte, 32)).
+		raw, err := sk.Bytes()
+		if err != nil {
+			return nil, nil, err
+		}
 		return sk, raw, nil
 	default:
 		return nil, nil, fmt.Errorf("no signer for suite 0x%04x", cs)

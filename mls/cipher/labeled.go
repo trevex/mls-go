@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/hpke"
 	"encoding/binary"
 	"fmt"
@@ -100,7 +99,14 @@ func (s Suite) SignaturePublicKey(signer crypto.Signer) ([]byte, error) {
 		if !ok {
 			return nil, errUnsupportedScheme
 		}
-		return elliptic.Marshal(elliptic.P256(), pub.X, pub.Y), nil //nolint:staticcheck — matches ParseUncompressedPublicKey in verifyClassical
+		// ECDH().Bytes() yields the uncompressed SEC1 point (0x04‖X‖Y),
+		// byte-identical to the deprecated elliptic.Marshal and matching
+		// ParseUncompressedPublicKey in verifyClassical.
+		ecdhPub, err := pub.ECDH()
+		if err != nil {
+			return nil, err
+		}
+		return ecdhPub.Bytes(), nil
 	default:
 		return nil, errUnsupportedScheme
 	}

@@ -166,7 +166,8 @@ wait_port "$OUR_PORT" "our server"
 wait_port "$OPENMLS_PORT" "OpenMLS"
 
 # --- 7. run the scenarios ----------------------------------------------------
-# Each config is run with -suite 1 -public across both clients (the runner
+# Each config is run twice — once with PublicMessage handshakes, once with
+# encrypted (PrivateMessage) member handshakes — across both clients (the runner
 # exercises every alice/bob role assignment). Exit code 0 = all combos passed.
 #
 # We ship repo-local configs under scripts/e2e-configs/ that contain exactly the

@@ -280,16 +280,15 @@ func TestControllerSelfRemoval(t *testing.T) {
 
 	// Wrap g0 (now at epoch 1) in a Controller.
 	cfg0 := ironcore.ControllerConfig{
-		VNI:              testVNI,
-		Suite:            suite,
-		Ordering:         seq,
-		Clock:            group.SystemClock{},
-		Validator:        group.BasicCredentialValidator{},
-		Cred:             cred0,
-		Signer:           signer0,
-		Lifetime:         lt,
-		Resolve:          nil,
-		HandshakePrivacy: ironcore.HandshakePlaintext, // preserve ErrSelfRemoved detection
+		VNI:       testVNI,
+		Suite:     suite,
+		Ordering:  seq,
+		Clock:     group.SystemClock{},
+		Validator: group.BasicCredentialValidator{},
+		Cred:      cred0,
+		Signer:    signer0,
+		Lifetime:  lt,
+		Resolve:   nil,
 	}
 	founder, err := ironcore.NewController(cfg0, g0)
 	if err != nil {
@@ -373,9 +372,8 @@ func TestControllerLifecycle(t *testing.T) {
 		return kp, ok
 	})
 
-	// Build founder (node-0) with resolver. HandshakePlaintext preserves the
-	// ErrSelfRemoved check on the remove commit below.
-	node0 := founderNode(t, suite, testVNI, "node-0", seq, resolver, ironcore.HandshakePlaintext)
+	// Build founder (node-0) with resolver.
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, resolver)
 
 	// Reconcile: desired = [node-0, node-1, node-2, node-3].
 	desired := [][]byte{
@@ -481,7 +479,6 @@ func TestControllerRekeyPCS(t *testing.T) {
 	ctx := context.Background()
 
 	// Build a converged 3-member group (node-0 committer, node-1, node-2).
-	// HandshakePlaintext on node-0 preserves the ErrSelfRemoved check below.
 	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
 	node2, kpMsg2, initPriv2, leafPriv2 := mkNode(t, suite, testVNI, "node-2", seq, nil)
 
@@ -494,7 +491,7 @@ func TestControllerRekeyPCS(t *testing.T) {
 		}
 		return nil, false
 	})
-	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver, ironcore.HandshakePlaintext)
+	node0 := founderNode(t, suite, testVNI, "node-0", seq, kpResolver)
 
 	result, err := node0.Reconcile(ctx, [][]byte{[]byte("node-0"), []byte("node-1"), []byte("node-2")})
 	if err != nil || !result.Committed || !result.Won {
@@ -612,9 +609,8 @@ func TestControllerHandover(t *testing.T) {
 	seq := sequencer.NewMemorySequencer()
 	ctx := context.Background()
 
-	// node-1 is the committer-elect in the handover; HandshakePlaintext lets
-	// node-0's HandleCommit detect self-removal via commitRemovesSelf.
-	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil, ironcore.HandshakePlaintext)
+	// node-1 is the committer-elect in the handover.
+	node1, kpMsg1, initPriv1, leafPriv1 := mkNode(t, suite, testVNI, "node-1", seq, nil)
 	node2, kpMsg2, initPriv2, leafPriv2 := mkNode(t, suite, testVNI, "node-2", seq, nil)
 
 	kpResolver := ironcore.KeyPackageResolver(func(identity []byte) ([]byte, bool) {

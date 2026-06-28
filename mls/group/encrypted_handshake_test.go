@@ -412,3 +412,46 @@ func TestMixedPublicPrivateSequence(t *testing.T) {
 	}
 	t.Logf("mixed public→private sequence OK, final EA=%x", committer.EpochAuthenticator())
 }
+
+// TestPeekCommitDecodesEncryptedCommit verifies that Group.PeekCommit can
+// authenticate and parse an encrypted (PrivateMessage) commit on the receiver
+// side without advancing the epoch. The receiver holds the epoch-n secret tree
+// and must be able to inspect the Commit's proposals before calling ProcessCommit.
+func TestPeekCommitDecodesEncryptedCommit(t *testing.T) {
+	committer, member := twoMemberGroup(t)
+
+	committer.SetEncryptHandshakes(true)
+
+	// Committer issues an encrypted path-only commit (no proposals).
+	commit, _, err := committer.Commit(group.CommitOptions{})
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Member (before processing) calls PeekCommit — must succeed and return a
+	// parsed Commit (non-error).
+	cm, err := member.PeekCommit(commit)
+	if err != nil {
+		t.Fatalf("PeekCommit on encrypted commit: %v", err)
+	}
+
+	// A path-only commit has no proposals — assert the slice is valid (nil or empty).
+	if len(cm.Proposals) != 0 {
+		t.Fatalf("PeekCommit: expected 0 proposals for path-only commit, got %d", len(cm.Proposals))
+	}
+
+	// The path must be present (path-only commit always has an UpdatePath).
+	if cm.Path == nil {
+		t.Fatal("PeekCommit: expected non-nil Path for path-only commit")
+	}
+
+	// Verify member can still process the commit normally after peeking.
+	if err := member.ProcessCommit(nil, commit); err != nil {
+		t.Fatalf("ProcessCommit after PeekCommit: %v", err)
+	}
+	if !bytes.Equal(member.EpochAuthenticator(), committer.EpochAuthenticator()) {
+		t.Fatalf("epoch_authenticator mismatch after ProcessCommit\n  member    %x\n  committer %x",
+			member.EpochAuthenticator(), committer.EpochAuthenticator())
+	}
+	t.Logf("PeekCommit on PrivateMessage commit OK, EA=%x", committer.EpochAuthenticator())
+}

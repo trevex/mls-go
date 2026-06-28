@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/trevex/mls-go/mls/cipher"
-	"github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/group"
 	"github.com/trevex/mls-go/mls/tree"
 )
@@ -468,38 +467,13 @@ func (c *Controller) identityToLeaf() (map[string]uint32, error) {
 	return m, nil
 }
 
-// memberCommitBody extracts the Commit body bytes from a framed member
-// PublicMessage commit (SenderTypeMember). Returns (body, true) for a valid
-// member commit, (nil, false) for any other message type or parse error.
-// Only the Commit body bytes are returned — no authentication is performed here
-// (authentication happens in ProcessCommit); this is purely structural.
-func memberCommitBody(commitMsg []byte) ([]byte, bool) {
-	var m framing.MLSMessage
-	if err := m.UnmarshalMLS(commitMsg); err != nil {
-		return nil, false
-	}
-	if m.WireFormat != framing.WireFormatPublicMessage || m.Public == nil {
-		return nil, false
-	}
-	if m.Public.Content.Sender.Type != framing.SenderTypeMember {
-		return nil, false
-	}
-	if m.Public.Content.ContentType != framing.ContentTypeCommit {
-		return nil, false
-	}
-	return m.Public.Content.Content, true
-}
-
-// commitRemovesSelf reports whether the framed member commit contains a by-value
-// Remove of this node's own leaf. Returns false for any
-// parse error or non-member commit.
+// commitRemovesSelf reports whether the framed member commit (PublicMessage or
+// PrivateMessage) contains a by-value Remove of this node's own leaf. It uses
+// Group.PeekCommit to authenticate and parse the commit regardless of framing.
+// Returns false for any parse error or non-member commit.
 func (c *Controller) commitRemovesSelf(commitMsg []byte) bool {
-	body, ok := memberCommitBody(commitMsg)
-	if !ok {
-		return false
-	}
-	var cm group.Commit
-	if err := cm.UnmarshalMLS(body); err != nil {
+	cm, err := c.g.PeekCommit(commitMsg)
+	if err != nil {
 		return false
 	}
 	own := c.g.OwnLeaf()

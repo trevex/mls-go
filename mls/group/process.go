@@ -291,6 +291,36 @@ func (g *Group) authenticateCommit(m framing.MLSMessage) (framing.AuthenticatedC
 	}
 }
 
+// PeekCommit authenticates an inbound member commit (PublicMessage or
+// PrivateMessage) and returns the parsed Commit WITHOUT applying it, so an
+// integrator can inspect its proposals (e.g. detect a self-Remove) regardless of
+// handshake framing. The caller must still be a member of the current epoch — a
+// PrivateMessage commit is decrypted with the current epoch's secret tree.
+// It returns an error for external/new_member commits and for non-commit content.
+func (g *Group) PeekCommit(commitMsg []byte) (Commit, error) {
+	var m framing.MLSMessage
+	if err := m.UnmarshalMLS(commitMsg); err != nil {
+		return Commit{}, err
+	}
+	// External / new_member commits are not member commits.
+	if m.WireFormat == framing.WireFormatPublicMessage && m.Public != nil &&
+		m.Public.Content.Sender.Type != framing.SenderTypeMember {
+		return Commit{}, errors.New("group: PeekCommit: not a member commit")
+	}
+	ac, err := g.authenticateCommit(m)
+	if err != nil {
+		return Commit{}, err
+	}
+	if ac.Content.ContentType != framing.ContentTypeCommit {
+		return Commit{}, errors.New("group: PeekCommit: not a commit")
+	}
+	var cm Commit
+	if err := cm.UnmarshalMLS(ac.Content.Content); err != nil {
+		return Commit{}, err
+	}
+	return cm, nil
+}
+
 // ProcessCommit advances the group by one epoch, given the proposals delivered
 // before the commit (cached by reference) and the commit MLSMessage. It verifies
 // the commit's authentication and confirmation_tag and returns an error (leaving

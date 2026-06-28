@@ -1,0 +1,10 @@
+# End-to-end interop workdir (clones of mls-implementations + openmls, builds)
+/.e2e/
+
+# Build outputs
+/interop/mls-interop
+*.out
+*.test
+
+# Editor / OS cruft
+.DS_Store

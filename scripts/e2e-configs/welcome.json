@@ -1,0 +1,5 @@
+{"scripts":{
+ "welcome_no_path":[{"action":"createGroup","actor":"alice"},{"action":"createKeyPackage","actor":"bob"},{"action":"addProposal","actor":"alice","keyPackage":1},{"action":"fullCommit","actor":"alice","byReference":[2],"joiners":["bob"]}],
+ "welcome_with_path":[{"action":"createGroup","actor":"alice"},{"action":"createKeyPackage","actor":"bob"},{"action":"addProposal","actor":"alice","keyPackage":1},{"action":"fullCommit","actor":"alice","byReference":[2],"joiners":["bob"],"force_path":true}],
+ "three_party":[{"action":"createGroup","actor":"alice"},{"action":"createKeyPackage","actor":"bob"},{"action":"createKeyPackage","actor":"charlie"},{"action":"addProposal","actor":"alice","keyPackage":1},{"action":"addProposal","actor":"alice","keyPackage":2},{"action":"fullCommit","actor":"alice","byReference":[3,4],"joiners":["bob","charlie"]}]
+}}

@@ -72,8 +72,9 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 
 	// 4. Mint the joiner leaf and add it (leftmost-blank-or-append → liC).
 	// NewKeyPackage mints fresh HPKE keys and a key_package-source leaf signed
-	// under the joiner's signing key.
-	kp, _, leafPriv, err := NewKeyPackage(suite, cred, signer, lifetime)
+	// under the joiner's signing key. The minted init/leaf priv keys are unused
+	// here: the leaf encryption key is rederived from the commit path below.
+	kp, _, _, err := NewKeyPackage(suite, cred, signer, lifetime)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: ExternalCommit: NewKeyPackage: %w", err)
 	}
@@ -216,7 +217,6 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: ExternalCommit: NewSecretTree: %w", err)
 	}
-	_ = leafPriv // init key was for the key_package; leaf encryption key rederived above
 
 	g := &Group{
 		suite:        suite,

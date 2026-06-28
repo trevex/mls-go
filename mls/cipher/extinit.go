@@ -107,11 +107,3 @@ func (s Suite) ExternalInitDecap(externalPriv, kemOutput []byte) (initSecret []b
 	kemContext := append(append([]byte{}, kemOutput...), skR.PublicKey().Bytes()...)
 	return s.extractAndExpand(dh, kemContext)
 }
-
-// DeriveExternalInitKeyPair derives the §8.3 external_priv/external_pub from the
-// epoch's external_secret. Under Option A this is exactly DeriveKeyPair for every
-// suite: DHKEM keeps its KAT-validated behavior, and the X-Wing stdlib seed/pub
-// are parseable by xwingDecap/xwingEncap, so no divergent keygen is needed.
-func (s Suite) DeriveExternalInitKeyPair(externalSecret []byte) (priv, pub []byte, err error) {
-	return s.DeriveKeyPair(externalSecret)
-}

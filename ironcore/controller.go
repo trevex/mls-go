@@ -344,9 +344,8 @@ func (c *Controller) Reconcile(ctx context.Context, desired [][]byte) (Reconcile
 		WelcomeMsg: welcomeMsg,
 	}
 	if !won {
-		result.Won = false
-		// Return ErrLostRace as the error so callers can errors.Is-check.
-		// But we also return the result (with won=false and commitMsg) per the API contract.
+		// Return ErrLostRace so callers can errors.Is-check, but also return the
+		// result (Won=false, with commitMsg) per the API contract.
 		return result, ErrLostRace
 	}
 	return result, nil

@@ -10,8 +10,10 @@
 # uses the `e2e` shell.
 
 # Wrappers. Override NIX=… to run a target without Nix (e.g. inside the shell).
+# NOTE: the `#` in `.#e2e` must be escaped as `\#`, or Make treats the rest of
+# the line as a comment and NIX_E2E silently collapses to `nix develop .`.
 NIX     ?= nix develop -c
-NIX_E2E ?= nix develop .#e2e -c
+NIX_E2E ?= nix develop .\#e2e -c
 
 .DEFAULT_GOAL := help
 

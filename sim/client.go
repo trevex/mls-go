@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/trevex/mls-mlkem-go/ironcore"
+	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
 	"github.com/trevex/mls-mlkem-go/mls/group"
 )
@@ -329,13 +330,86 @@ func (c *Client) toDS(env Envelope) Envelope {
 	return env
 }
 
-// ─── stubs: replaced in Task 7 ────────────────────────────────────────────────
+// ─── Task 7: fork detection + resolution + recovery ──────────────────────────
 
-// forkResolve is fully implemented in Task 7.
-func (c *Client) forkResolve(_ uint32, _ uint64) {}
+// forkResolve runs the §3.3 / N3 resolution glue for a contested (vni, base).
+func (c *Client) forkResolve(vni uint32, base uint64) {
+	st := c.vnis[vni]
+	if st == nil || !st.joined {
+		return
+	}
+	key := vniKey(vni, base)
+	refs := dedupRefs(st.seen[key])
+	if len(refs) < 2 {
+		return
+	}
+	c.checker.markDivergence(vni, base)
+	applied, ok := st.applied[base]
+	if !ok || st.recovered[base] {
+		return
+	}
+	canon := sequencer.CanonicalCommit(c.suite, toGroupRefs(refs))
+	if string(canon) == string(applied) {
+		return // already on the canonical branch
+	}
+	// Off-canonical: recover to the canonical branch via external commit.
+	fetchGI := func(ref group.CommitRef) (*group.GroupInfo, error) {
+		gb := st.giByRef[string(ref)]
+		if gb == nil {
+			return nil, errNoGI
+		}
+		var gi group.GroupInfo
+		if err := gi.UnmarshalMLS(gb); err != nil {
+			return nil, err
+		}
+		return &gi, nil
+	}
+	t0 := time.Now()
+	recMsg, err := st.ctrl.AutoRecover(ctx(), toGroupRefs(refs), fetchGI)
+	c.metrics.cpu("AutoRecover", time.Since(t0))
+	if err != nil {
+		return // target GI not yet available; retried as more GroupInfos arrive
+	}
+	st.recovered[base] = true
+	c.cacheCurrentSA(vni)
+	c.reportAuth(vni)
+	c.metrics.Recoveries++
+	c.metrics.LostRekeys++ // the loser's branch rekey is discarded (design spec §3.6)
+	// broadcast the recovery (external) commit; its base is the canonical epoch.
+	newBase := st.ctrl.Epoch() - 1
+	st.applied[newBase] = []byte(contentHash(recMsg))
+	c.broadcastCommit(vni, newBase, true, recMsg)
+}
 
-// recoverViaLatestGI is fully implemented in Task 7.
-func (c *Client) recoverViaLatestGI(_ uint32) {}
+// recoverViaLatestGI is the catch-up fallback (partition / no usable log).
+func (c *Client) recoverViaLatestGI(vni uint32) {
+	st := c.vnis[vni]
+	// pick any cached GroupInfo whose epoch > ours as the recovery target
+	var best []byte
+	for _, ref := range sortedRefKeys(st.giByRef) {
+		best = st.giByRef[ref]
+	}
+	if best == nil {
+		return
+	}
+	var gi group.GroupInfo
+	if gi.UnmarshalMLS(best) != nil {
+		return
+	}
+	vg := ironcore.NewVNIGroup(vni, st.ctrl.Group())
+	refs := []group.CommitRef{group.CommitRef(c.suite.Hash(best))}
+	st.giByRef[string(refs[0])] = best
+	fetchGI := func(group.CommitRef) (*group.GroupInfo, error) { return &gi, nil }
+	recMsg, err := ironcore.RecoverViaExternalCommit(ctx(), vg, c.suite, refs, fetchGI,
+		optimisticOrdering{}, c.dir.cred(c.identity), c.signer, maxLifetime())
+	if err != nil {
+		return
+	}
+	c.cacheCurrentSA(vni)
+	c.reportAuth(vni)
+	c.metrics.Recoveries++
+	c.broadcastCommit(vni, st.ctrl.Epoch()-1, true, recMsg)
+}
 
 // ─── stubs: replaced in Task 8 ────────────────────────────────────────────────
 

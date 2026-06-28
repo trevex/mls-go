@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/trevex/mls-mlkem-go/ironcore"
+	"github.com/trevex/mls-mlkem-go/ironcore/sequencer"
 	"github.com/trevex/mls-mlkem-go/mls/cipher"
+	"github.com/trevex/mls-mlkem-go/mls/group"
 )
 
 // ─── shared harness ───────────────────────────────────────────────────────────
@@ -194,5 +197,184 @@ func TestClientCatchupViaLog(t *testing.T) {
 	eaB := cB.vnis[100].ctrl.Group().EpochAuthenticator()
 	if !bytes.Equal(eaA, eaB) {
 		t.Fatal("EpochAuthenticator mismatch after catch-up")
+	}
+}
+
+// ─── Task 7 tests ─────────────────────────────────────────────────────────────
+
+// TestForkResolveSingleLoser: client C is placed on a non-canonical fork branch
+// by injecting seen/applied state directly. After forkResolve is called, C must
+// AutoRecover to the canonical GroupInfo (A's branch), broadcast a recovery
+// commit, and all members converge to byte-equal EpochAuthenticator + SA key.
+// With stub forkResolve (Task 6), C stays at baseEpoch and the epoch assertion
+// fires → this test FAILS until the real implementation is in place.
+func TestForkResolveSingleLoser(t *testing.T) {
+	s, _, b, m, dir, checker, suite, ds0, ds1, dsIDs := buildClientHarness(t, 10)
+
+	// Build a 3-member group (A = committer, B, C).
+	sigA := makeSigner(); dir.register("A", sigA)
+	sigB := makeSigner(); dir.register("B", sigB)
+	sigC := makeSigner(); dir.register("C", sigC)
+
+	cA := newClient(ActorID(0), suite, sigA, "A", b, s, dir, dsIDs, m, checker, 2)
+	cB := newClient(ActorID(1), suite, sigB, "B", b, s, dir, dsIDs, m, checker, 2)
+	cC := newClient(ActorID(2), suite, sigC, "C", b, s, dir, dsIDs, m, checker, 2)
+
+	cA.foundVNI(100)
+	cB.prospectiveVNI(100)
+	cC.prospectiveVNI(100)
+
+	cA.reconcile(100, [][]byte{[]byte("A"), []byte("B")})
+	drainAll(s, []*Client{cA, cB, cC}, []*DS{ds0, ds1}, m)
+	if !cB.vnis[100].joined {
+		t.Fatal("B did not join")
+	}
+	cA.reconcile(100, [][]byte{[]byte("A"), []byte("B"), []byte("C")})
+	drainAll(s, []*Client{cA, cB, cC}, []*DS{ds0, ds1}, m)
+	if !cC.vnis[100].joined {
+		t.Fatal("C did not join")
+	}
+
+	baseEpoch := cA.vnis[100].ctrl.Epoch()
+
+	// A rekeys (canonical branch). Drain for A and B only; C silently misses it.
+	cA.rekey(100)
+	drainAll(s, []*Client{cA, cB}, []*DS{ds0, ds1}, m) // C's events silently dropped
+
+	if cA.vnis[100].ctrl.Epoch() <= baseEpoch {
+		t.Fatal("A did not advance via rekey")
+	}
+	if cC.vnis[100].ctrl.Epoch() != baseEpoch {
+		t.Fatalf("C should still be at baseEpoch=%d, got %d",
+			baseEpoch, cC.vnis[100].ctrl.Epoch())
+	}
+
+	// canonicalRef = the commit hash B successfully applied at baseEpoch.
+	canonicalRef := string(cB.vnis[100].applied[baseEpoch])
+	if canonicalRef == "" {
+		t.Fatal("B did not record applied ref for baseEpoch")
+	}
+
+	// Get A's canonical GroupInfo at epoch baseEpoch+1.
+	gi, err := cA.vnis[100].ctrl.PublishGroupInfo()
+	if err != nil {
+		t.Fatal("PublishGroupInfo:", err)
+	}
+	gb, _ := gi.MarshalMLS()
+
+	// Craft a fake competing ref (distinct hash from canonical).
+	fakeRef := contentHash([]byte("fake-non-canonical-commit"))
+
+	// Determine which ref is canonical; set C's applied to the NON-canonical one
+	// so that forkResolve detects C is off-canonical and triggers AutoRecover.
+	refs := []group.CommitRef{[]byte(fakeRef), []byte(canonicalRef)}
+	winner := sequencer.CanonicalCommit(suite, refs)
+	var appliedRef string
+	if string(winner) == canonicalRef {
+		appliedRef = fakeRef
+	} else {
+		appliedRef = canonicalRef
+	}
+
+	// Inject fork state into C: two refs seen, C applied the non-canonical one.
+	// Store the valid GroupInfo for BOTH refs so fetchGI always succeeds.
+	key := vniKey(100, baseEpoch)
+	cC.vnis[100].seen[key] = [][]byte{[]byte(fakeRef), []byte(canonicalRef)}
+	cC.vnis[100].applied[baseEpoch] = []byte(appliedRef)
+	cC.vnis[100].giByRef[fakeRef] = gb
+	cC.vnis[100].giByRef[canonicalRef] = gb
+
+	// forkResolve: with stub → no-op, C stays at baseEpoch → epoch assertion fails.
+	// With real impl → C calls AutoRecover → C advances, broadcasts recovery commit.
+	cC.forkResolve(100, baseEpoch)
+
+	// Drain: C's recovery commit propagates to A and B (they advance too).
+	drainAll(s, []*Client{cA, cB, cC}, []*DS{ds0, ds1}, m)
+
+	epochA := cA.vnis[100].ctrl.Epoch()
+	epochC := cC.vnis[100].ctrl.Epoch()
+	if epochA != epochC {
+		t.Fatalf("epoch mismatch after recovery: A=%d C=%d (fork not resolved)", epochA, epochC)
+	}
+	eaA := cA.vnis[100].ctrl.Group().EpochAuthenticator()
+	eaC := cC.vnis[100].ctrl.Group().EpochAuthenticator()
+	if !bytes.Equal(eaA, eaC) {
+		t.Fatal("EpochAuthenticator mismatch after fork resolution")
+	}
+	saA, _ := cA.vnis[100].ctrl.CurrentSA()
+	saC, _ := cC.vnis[100].ctrl.CurrentSA()
+	if !bytes.Equal(saA.Key, saC.Key) {
+		t.Fatal("SA key mismatch after fork resolution")
+	}
+}
+
+// TestForkResolveTwoLosers: verifies CanonicalCommit tie-break is
+// order-independent (the core invariant for multi-loser convergence — de-risk
+// #2 finding). Any two losers independently computing CanonicalCommit on the
+// same ref set always agree on the winner.
+func TestForkResolveTwoLosers(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.XWING_AES256GCM_SHA256_Ed25519)
+	if !ok {
+		t.Fatal("suite not registered")
+	}
+
+	// Use real suite hashes to simulate two competing commit refs.
+	commitRef1 := group.CommitRef(suite.Hash([]byte("competing-branch-A")))
+	commitRef2 := group.CommitRef(suite.Hash([]byte("competing-branch-B")))
+
+	refs := []group.CommitRef{commitRef1, commitRef2}
+	canon := sequencer.CanonicalCommit(suite, refs)
+	if canon == nil {
+		t.Fatal("CanonicalCommit returned nil for non-empty candidates")
+	}
+	if string(canon) != string(commitRef1) && string(canon) != string(commitRef2) {
+		t.Fatal("CanonicalCommit returned unexpected ref")
+	}
+
+	// Order-independence: reversed input → same winner.
+	refs2 := []group.CommitRef{commitRef2, commitRef1}
+	canon2 := sequencer.CanonicalCommit(suite, refs2)
+	if string(canon) != string(canon2) {
+		t.Fatal("CanonicalCommit is NOT order-independent (multi-loser convergence broken)")
+	}
+
+	// Three-way tie: add a third ref; winner is still deterministic.
+	commitRef3 := group.CommitRef(suite.Hash([]byte("competing-branch-C")))
+	refs3 := []group.CommitRef{commitRef1, commitRef2, commitRef3}
+	canon3a := sequencer.CanonicalCommit(suite, refs3)
+	canon3b := sequencer.CanonicalCommit(suite, []group.CommitRef{commitRef3, commitRef1, commitRef2})
+	if string(canon3a) != string(canon3b) {
+		t.Fatal("CanonicalCommit not order-independent for 3 candidates")
+	}
+}
+
+// TestForkDetectedRegistry: the shared EpochAuthenticatorRegistry flags a fork
+// when two distinct authenticators are reported for the same (vni, epoch).
+func TestForkDetectedRegistry(t *testing.T) {
+	checker := newInvariantChecker()
+
+	ea1 := []byte("authenticator-branch-1")
+	ea2 := []byte("authenticator-branch-2")
+
+	checker.reportAuth(100, 3, ea1)
+	if checker.far.Divergent(group.GroupID(ironcore.GroupID(100)), 3) {
+		t.Fatal("should not be divergent after first report")
+	}
+
+	checker.reportAuth(100, 3, ea2)
+	if !checker.far.Divergent(group.GroupID(ironcore.GroupID(100)), 3) {
+		t.Fatal("should be divergent after two distinct authenticators")
+	}
+
+	// Idempotent: same EA again does not change divergent status.
+	checker.reportAuth(100, 3, ea1)
+	if !checker.far.Divergent(group.GroupID(ironcore.GroupID(100)), 3) {
+		t.Fatal("still divergent after duplicate report")
+	}
+
+	// Different epoch is independent.
+	checker.reportAuth(100, 4, ea1)
+	if checker.far.Divergent(group.GroupID(ironcore.GroupID(100)), 4) {
+		t.Fatal("epoch 4 should not be divergent with only one authenticator")
 	}
 }

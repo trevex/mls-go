@@ -21,7 +21,8 @@ type CommitOptions struct {
 
 // Commit applies the options' proposals to a cloned tree (RFC 9420 §12.3
 // order), generates an UpdatePath, advances the key schedule to epoch n+1,
-// frames the commit as a PublicMessage, builds a Welcome for newly-added
+// frames the commit as a PrivateMessage (when encryptHandshakes is set) or a
+// PublicMessage (default), builds a Welcome for newly-added
 // members, and advances g to epoch n+1. It returns the commit MLSMessage bytes
 // and (if any members were added) the Welcome MLSMessage bytes
 // (RFC 9420 §12.4/§12.4.3.1).
@@ -191,10 +192,10 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	confTag := keyschedule.ConfirmationTag(g.suite, es.ConfirmationKey, confirmed)
 
 	// Assemble the MLSMessage (PrivateMessage when encryptHandshakes, else PublicMessage).
-	// Frame under the CURRENT (epoch-n) secret tree + sender-data secret,
-	// BEFORE the atomic state swap below installs epoch n+1.
 	var commitMLS framing.MLSMessage
 	if wf == framing.WireFormatPrivateMessage {
+		// Frame under the CURRENT (epoch-n) secret tree + sender-data secret,
+		// BEFORE the atomic state swap below installs epoch n+1.
 		var guard [4]byte
 		if _, err := rand.Read(guard[:]); err != nil {
 			return nil, nil, fmt.Errorf("group: Commit: rand.Read(guard): %w", err)

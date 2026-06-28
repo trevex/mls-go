@@ -32,13 +32,13 @@ type Group struct {
 	// appGeneration is the per-epoch, per-sender monotonic counter for application
 	// messages (RFC 9420 §9.1). It is reset to 0 on every epoch change.
 	appGeneration uint32
+	// handshakeGeneration is the per-epoch monotonic counter for the handshake
+	// ratchet (separate from appGeneration). Reset to 0 on every epoch change.
+	handshakeGeneration uint32
 	// encryptHandshakes makes this member frame its OWN Commit/Proposal/Update as
 	// a PrivateMessage (RFC 9420 encrypt_handshake). Receive is always wire-format
 	// agnostic; this only affects outbound member handshakes. Default false.
 	encryptHandshakes bool
-	// handshakeGeneration is the per-epoch monotonic counter for the handshake
-	// ratchet (separate from appGeneration). Reset to 0 on every epoch change.
-	handshakeGeneration uint32
 	// pendingUpdates maps new-leaf-pubkey (string) → new-leaf-priv for Update
 	// proposals authored by this member but not yet committed.  ProcessCommit
 	// swaps the key into g.priv atomically, only after confirmation_tag verifies,

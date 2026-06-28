@@ -66,7 +66,7 @@ func applyProposals(
 			if !ok {
 				return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: ProposalRef %x not in cache", por.Reference)
 			}
-			allResolved = append(allResolved, resolved{proposal: cp.proposal, sender: cp.sender})
+			allResolved = append(allResolved, resolved(cp))
 		default:
 			return nil, nil, false, nil, nil, fmt.Errorf("group: applyProposals: unknown ProposalOrRefType %d", por.Type)
 		}

@@ -120,16 +120,6 @@ func assertControllerConverged(t *testing.T, tag string, ctrls ...*ironcore.Cont
 	}
 }
 
-// broadcast calls HandleCommit on all controllers in the list.
-func broadcast(t *testing.T, commitMsg []byte, ctrls ...*ironcore.Controller) {
-	t.Helper()
-	for i, c := range ctrls {
-		if err := c.HandleCommit(commitMsg); err != nil {
-			t.Fatalf("broadcast: ctrl[%d].HandleCommit: %v", i, err)
-		}
-	}
-}
-
 // ─── Task 2: Controller scaffold ─────────────────────────────────────────────
 
 // TestControllerScaffold verifies that a 1-member founder Controller:

@@ -3,6 +3,7 @@ package ironcore_test
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"fmt"
 	"testing"
 
@@ -130,7 +131,7 @@ func TestRecoverViaExternalCommit(t *testing.T) {
 
 	var canonicalGroup *group.Group
 	var loserVNI *ironcore.VNIGroup
-	var loserSignerCrypto = signer0 // overridden below
+	var loserSignerCrypto crypto.Signer
 	if bytes.Equal(canonical, refA) {
 		canonicalGroup = g0
 		loserVNI = ironcore.NewVNIGroup(vni, g1)

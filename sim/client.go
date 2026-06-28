@@ -86,8 +86,9 @@ type Client struct {
 	dsIDs       []ActorID // dsIDs[r] = reflector R_r
 	metrics     *Metrics
 	checker     *InvariantChecker
-	W           int  // SA-overlap depth (make-before-break window)
-	mbbDisabled bool // negative control: W=0 + no sender-lag
+	W                 int  // SA-overlap depth (make-before-break window)
+	mbbDisabled       bool // negative control: W=0 + no sender-lag
+	encryptHandshakes bool // EncryptedChurn scenario: member handshakes are PrivateMessage
 }
 
 func newClient(id ActorID, suite cipher.Suite, signer crypto.Signer, identity string,
@@ -129,16 +130,21 @@ func (c *Client) prospectiveVNI(ch uint32) {
 }
 
 func (c *Client) controllerCfg(ch uint32) ironcore.ControllerConfig {
+	hp := ironcore.HandshakePlaintext
+	if c.encryptHandshakes {
+		hp = ironcore.HandshakeEncrypted
+	}
 	return ironcore.ControllerConfig{
-		VNI:       ch, // channel id drives BOTH GroupID and DeriveSAKeys
-		Suite:     c.suite,
-		Ordering:  optimisticOrdering{},
-		Clock:     fixedClock{},
-		Validator: group.BasicCredentialValidator{},
-		Cred:      c.dir.cred(c.identity),
-		Signer:    c.signer,
-		Lifetime:  maxLifetime(),
-		Resolve:   c.dir.resolver(ch),
+		VNI:              ch, // channel id drives BOTH GroupID and DeriveSAKeys
+		Suite:            c.suite,
+		Ordering:         optimisticOrdering{},
+		Clock:            fixedClock{},
+		Validator:        group.BasicCredentialValidator{},
+		Cred:             c.dir.cred(c.identity),
+		Signer:           c.signer,
+		Lifetime:         maxLifetime(),
+		Resolve:          c.dir.resolver(ch),
+		HandshakePrivacy: hp,
 	}
 }
 

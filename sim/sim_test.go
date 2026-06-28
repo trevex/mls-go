@@ -12,6 +12,20 @@ func TestRunNominalConverges(t *testing.T) {
 	}
 }
 
+func TestEncryptedChurnHidesHandshakes(t *testing.T) {
+	r := Run(EncryptedChurn(), 1)
+	if !r.InvariantsHeld {
+		t.Fatalf("encrypted_churn invariants failed: divergence=%v membership=%v packetLoss=%d exposures=%d",
+			r.Divergence, r.Membership, len(r.PacketLoss), r.Metrics.PlaintextHandshakeExposures)
+	}
+	if r.Metrics.PlaintextHandshakeExposures != 0 {
+		t.Fatalf("reflector observed %d plaintext member handshakes, want 0", r.Metrics.PlaintextHandshakeExposures)
+	}
+	if r.Metrics.CommitMsgs == 0 {
+		t.Fatal("scenario produced no commits to protect")
+	}
+}
+
 func TestDeterminism(t *testing.T) {
 	// Same seed ⇒ byte-identical run: the event structure is determined entirely
 	// by the seeded scheduler RNG. The dual single-sequencer model has no forks and

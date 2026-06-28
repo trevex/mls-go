@@ -20,6 +20,10 @@ type Scenario struct {
 	SettleRounds  uint64
 	MBBDisabled   bool // negative control: W=0 + no sender-lag
 	SingleReplica bool // negative control: model only ONE replica (no redundancy)
+	// EncryptHandshakes makes every VNI in this scenario frame member handshakes
+	// as PrivateMessage (maps to ironcore HandshakePrivacy). Default false so the
+	// other scenarios keep their existing PublicMessage behavior.
+	EncryptHandshakes bool
 }
 
 type scriptedPartition struct {
@@ -94,6 +98,15 @@ func BothRekey() Scenario {
 	return s
 }
 
+// EncryptedChurn drives membership churn with encrypted member handshakes and
+// asserts the reflectors never observe plaintext membership changes.
+func EncryptedChurn() Scenario {
+	s := Nominal()
+	s.Name = "encrypted_churn"
+	s.EncryptHandshakes = true
+	return s
+}
+
 // NegativeControl is the data-plane negative control: ONE replica, W=0, no
 // sender-lag. A rekey under churn MUST produce undecryptable packets (inv. 2
 // fails), proving the zero-loss checker has teeth.
@@ -108,7 +121,7 @@ func NegativeControl() Scenario {
 
 // All returns the property-tested suite in deterministic order.
 func All() []Scenario {
-	return []Scenario{Nominal(), Drops(), DSDown(), PartitionRecover(), BothRekey()}
+	return []Scenario{Nominal(), Drops(), DSDown(), PartitionRecover(), BothRekey(), EncryptedChurn()}
 }
 
 // ByName looks up a scenario for the CLI.

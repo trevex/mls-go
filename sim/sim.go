@@ -430,8 +430,12 @@ func Run(sc Scenario, seed int64) Result {
 		dir.register(id, signer)
 		clients[i] = newClient(ActorID(i), suite, signer, id, bus, s, dir, dsIDs, metrics, checker, sc.W)
 		clients[i].mbbDisabled = sc.MBBDisabled
+		clients[i].encryptHandshakes = sc.EncryptHandshakes
 	}
 	dss := []*DS{newDS(dsIDs[0], 0, bus, faults), newDS(dsIDs[1], 1, bus, faults)}
+	for _, ds := range dss {
+		ds.encryptHandshakes = sc.EncryptHandshakes
+	}
 
 	w := &world{
 		sc: sc, s: s, bus: bus, faults: faults, metrics: metrics,
@@ -458,6 +462,9 @@ func Run(sc Scenario, seed int64) Result {
 	// total order); the invariant checker confirms this via Result.Fork staying nil.
 	r := checker.Evaluate(clients, w.intended)
 	r.Metrics = metrics
+	if metrics.PlaintextHandshakeExposures > 0 {
+		r.InvariantsHeld = false
+	}
 	r.Trace = trace
 	return r
 }

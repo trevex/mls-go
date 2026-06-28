@@ -6,6 +6,7 @@ import (
 
 	"github.com/trevex/mls-go/ironcore"
 	"github.com/trevex/mls-go/ironcore/sequencer"
+	framing "github.com/trevex/mls-go/mls/framing"
 	"github.com/trevex/mls-go/mls/group"
 )
 
@@ -16,12 +17,13 @@ import (
 // by a single designated committer, the register emits a true total order and the
 // replica never forks. There is NO cross-reflector contact, NO lease, NO consensus.
 type DS struct {
-	id      ActorID
-	replica int
-	bus     *Bus
-	faults  *faultState
-	seq     *sequencer.MemorySequencer // this reflector's local accept-once register
-	logs    map[uint32][]CommitRecord  // channel(saVNI) -> serialized commit log
+	id                ActorID
+	replica           int
+	bus               *Bus
+	faults            *faultState
+	seq               *sequencer.MemorySequencer // this reflector's local accept-once register
+	logs              map[uint32][]CommitRecord  // channel(saVNI) -> serialized commit log
+	encryptHandshakes bool                       // EncryptedChurn scenario: detect plaintext member handshakes
 }
 
 func newDS(id ActorID, replica int, bus *Bus, f *faultState) *DS {
@@ -49,11 +51,32 @@ func (d *DS) handle(env Envelope, m *Metrics) {
 	}
 }
 
+// observeHandshakePrivacy flags a member handshake that a reflector could read
+// in cleartext while the VNI is configured to encrypt handshakes.
+func (d *DS) observeHandshakePrivacy(env Envelope, m *Metrics) {
+	if !d.encryptHandshakes {
+		return
+	}
+	if env.Type != MsgCommit { // proposals ride inside by-value commits in this model
+		return
+	}
+	var msg framing.MLSMessage
+	if err := msg.UnmarshalMLS(env.Payload); err != nil {
+		return // unparseable bytes are not a plaintext exposure
+	}
+	// new_member_commit (external join/recovery) is PublicMessage by RFC — ignore.
+	if msg.WireFormat == framing.WireFormatPublicMessage && msg.Public != nil &&
+		msg.Public.Content.Sender.Type != framing.SenderTypeNewMemberCommit {
+		m.PlaintextHandshakeExposures++
+	}
+}
+
 // onCommit serializes a commit through this reflector's local register. The first
 // commit to win (channel, epoch) is appended + fanned out; any different commit
 // for an already-decided slot is dropped. A re-submitted identical commit (a
 // resend after a drop) is idempotently accepted and re-fanned-out.
 func (d *DS) onCommit(env Envelope, m *Metrics) {
+	d.observeHandshakePrivacy(env, m)
 	gid := group.GroupID(ironcore.GroupID(env.VNI))
 	ref := group.CommitRef([]byte(env.Hash))
 	ok, err := d.seq.AcceptCommit(context.Background(), gid, env.Base, ref)

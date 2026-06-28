@@ -1,0 +1,64 @@
+{
+  "scripts": {
+    "empty": [
+      {"action": "createGroup", "actor": "alice", "members": ["bob"]},
+      {"action": "fullCommit", "actor": "alice", "members": ["bob"]}
+    ],
+
+    "add": [
+      {"action": "createGroup", "actor": "alice", "members": ["bob"]},
+
+      {"action": "createKeyPackage", "actor": "charlie1"},
+      {"action": "createKeyPackage", "actor": "charlie2"},
+      {"action": "createKeyPackage", "actor": "charlie3"},
+      {"action": "addProposal", "actor": "alice", "keyPackage": 1},
+      {"action": "addProposal", "actor": "bob", "keyPackage": 2},
+      {
+        "action": "fullCommit",
+        "actor": "alice",
+        "byReference": [4, 5],
+        "byValue": [{"proposalType": "add", "keyPackage": 3}],
+        "members": ["bob"],
+        "joiners": ["charlie1", "charlie2", "charlie3"],
+        "force_path": true
+      },
+
+      {"action": "createKeyPackage", "actor": "charlie4"},
+      {"action": "createKeyPackage", "actor": "charlie5"},
+      {"action": "createKeyPackage", "actor": "charlie6"},
+      {"action": "addProposal", "actor": "alice", "keyPackage": 7},
+      {"action": "addProposal", "actor": "bob", "keyPackage": 8},
+      {
+        "action": "fullCommit",
+        "actor": "alice",
+        "byReference": [10, 11],
+        "byValue": [{"proposalType": "add", "keyPackage": 9}],
+        "members": ["bob", "charlie1", "charlie2"],
+        "joiners": ["charlie4", "charlie5", "charlie6"],
+        "force_path": false
+      }
+    ],
+
+    "remove": [
+      {"action": "createGroup", "actor": "alice", "members": ["bob"]},
+
+      {"action": "createKeyPackage", "actor": "charlie1"},
+      {"action": "createKeyPackage", "actor": "charlie2"},
+      {"action": "createKeyPackage", "actor": "charlie3"},
+      {"action": "addProposal", "actor": "alice", "keyPackage": 1},
+      {"action": "addProposal", "actor": "alice", "keyPackage": 2},
+      {"action": "addProposal", "actor": "alice", "keyPackage": 3},
+      {"action": "fullCommit", "actor": "alice", "byReference": [4, 5, 6], "members": ["bob"], "joiners": ["charlie1", "charlie2", "charlie3"]},
+
+      {"action": "removeProposal", "actor": "alice", "removed": "charlie1"},
+      {"action": "removeProposal", "actor": "bob", "removed": "charlie2"},
+      {"action": "fullCommit", "actor": "alice", "byReference": [8, 9], "byValue": [{"proposalType": "remove", "removed": "charlie3"}], "members": ["bob"]}
+    ],
+
+    "update": [
+      {"action": "createGroup", "actor": "alice", "members": ["bob"]},
+      {"action": "updateProposal", "actor": "bob"},
+      {"action": "fullCommit", "actor": "alice", "byReference": [1], "members": ["bob"]}
+    ]
+  }
+}

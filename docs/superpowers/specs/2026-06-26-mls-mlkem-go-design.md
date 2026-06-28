@@ -71,8 +71,10 @@ type DeliveryService interface {
 }
 
 // Ordering is the single-linearization-point contract (§5). One accepted
-// Commit per (group, epoch). Implementations: B1 fenced single-writer (default),
-// B2 consensus register.
+// Commit per (group, epoch). Implementations: B1 fenced single-writer
+// (library-default Sequencer impl), B2 consensus register. NOTE: for real
+// metalbond the recommended model is store-free dual-group redundancy /
+// static-precedence local registers, NOT a leased CP store — see §5.5 note.
 type Ordering interface {
     // AcceptCommit returns ok=true iff this is the first valid commit for
     // (group, epoch). Idempotent: re-submitting the SAME commit returns ok=true.
@@ -124,7 +126,7 @@ This is CAP: per-group commit ordering is a **CP** problem; a BGP-style route re
 ### 5.5 The mechanism — a single linearization point per group
 The library models ordering as the `Ordering` port (§4) with the §5.1 contract. Two implementations:
 
-- **B1 — Fenced single-writer per VNI (default; "primary/secondary by config").** Each VNI is *owned* by exactly one RR at a time via an **epoch-numbered lease / fencing token**. The standby takes over a VNI only after the old lease **provably expires** (lease TTL ≤ commit-acceptance timeout), so the two RRs can never both believe they own the VNI. Lease backed by a strongly-consistent store (etcd / the Kubernetes control plane). Failover = bounded *rekey-only* unavailability window. Static primary/secondary assignment is the simplest valid fencing config; dynamic leasing is an allowed refinement.
+- **B1 — Fenced single-writer per VNI (library-default `Sequencer` impl; *not* the recommended metalbond model — see the refinement note below).** Each VNI is *owned* by exactly one RR at a time via an **epoch-numbered lease / fencing token**. The standby takes over a VNI only after the old lease **provably expires** (lease TTL ≤ commit-acceptance timeout), so the two RRs can never both believe they own the VNI. Lease backed by a strongly-consistent store (etcd / the Kubernetes control plane). Failover = bounded *rekey-only* unavailability window. Static primary/secondary assignment is the simplest valid fencing config; dynamic leasing is an allowed refinement.
 - **B2 — Consensus-backed register.** Raft/Paxos compare-and-set over `(group,epoch)→Commit`. Seamless failover, but requires an **odd quorum** (3rd witness/arbiter) — a bare pair cannot form a safe quorum. Quorum write per commit.
 
 Both are CP and provably satisfy §5.1. The library does not pick one; metalbond selects an implementation.

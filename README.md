@@ -214,7 +214,7 @@ guide).
   [`docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md`](docs/superpowers/specs/2026-06-26-mls-mlkem-go-design.md).
 - Simulation design spec (dual-group pure redundancy):
   [`docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md`](docs/superpowers/specs/2026-06-28-metalnet-simulation-design.md).
-- Implementation roadmap (15 plans):
+- Implementation roadmap (16 plans):
   [`docs/superpowers/plans/`](docs/superpowers/plans/).
 
 **Recommended metalbond ordering model.** The `ironcore/sequencer` B1

@@ -10,7 +10,7 @@ import (
 
 // SignCommit signs FramedContentTBS for a PublicMessage commit and returns the
 // ConfirmedTranscriptHashInput (wire_format ‖ FramedContent ‖ signature<V>)
-// plus the signature (RFC 9420 §6.1 / §8.2 / N6).
+// plus the signature (RFC 9420 §6.1 / §8.2).
 //
 // The confirmedInput is byte-identical to the input that
 // keyschedule.SplitAuthenticatedContent produces for the same commit: both are
@@ -33,7 +33,7 @@ func SignCommit(suite cipher.Suite, signer crypto.Signer, gc *keyschedule.GroupC
 }
 
 // AssembleCommitPublic builds the PublicMessage from a precomputed signature +
-// confirmation_tag, adding the membership_tag (RFC 9420 §6.2 / N6). The
+// confirmation_tag, adding the membership_tag (RFC 9420 §6.2). The
 // membership_tag uses the current epoch's gc + membershipKey.
 func AssembleCommitPublic(suite cipher.Suite, gc *keyschedule.GroupContext, membershipKey []byte, fc FramedContent, signature, confTag []byte) (PublicMessage, error) {
 	auth := FramedContentAuthData{Signature: signature, ConfirmationTag: confTag}

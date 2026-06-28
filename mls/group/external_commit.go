@@ -22,7 +22,7 @@ import (
 // The joiner's GroupInfo gi must be signed and carry both the ratchet_tree
 // (0x0002) and external_pub (0x0004) extensions (see PublishGroupInfo).
 //
-// Anti-double-join (§12.4.3.2 N5): if the joiner's signature key already appears
+// Anti-double-join (§12.4.3.2): if the joiner's signature key already appears
 // in the published tree (stale/losing-branch re-join), ExternalCommit
 // automatically includes a Remove of the prior leaf.
 func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, signer crypto.Signer, lifetime tree.Lifetime) (*Group, []byte, error) {
@@ -57,7 +57,7 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 
 	gc := gi.GroupContext // GroupContext[n]
 
-	// 3. Anti-double-join (N5): Remove a prior appearance of this signer.
+	// 3. Anti-double-join: Remove a prior appearance of this signer.
 	sigPub, err := suite.SignaturePublicKey(signer)
 	if err != nil {
 		return nil, nil, fmt.Errorf("group: ExternalCommit: SignaturePublicKey: %w", err)
@@ -101,7 +101,7 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 	}
 
 	// 6. UpdatePath from liC. The mkGC closure builds the HPKE encryption context
-	// GroupContext with the OLD confirmed_transcript_hash (two-GroupContext rule N0).
+	// GroupContext with the OLD confirmed_transcript_hash (two-GroupContext rule).
 	leafSecret := make([]byte, suite.HashLen())
 	if _, err := rand.Read(leafSecret); err != nil {
 		return nil, nil, fmt.Errorf("group: ExternalCommit: rand.Read(leafSecret): %w", err)
@@ -240,7 +240,7 @@ func ExternalCommit(suite cipher.Suite, gi GroupInfo, cred tree.Credential, sign
 
 // findLeafBySignatureKey returns the leaf index of the first leaf node in rt
 // whose SignatureKey equals sigKey, or (0, false) if not found.
-// Used for anti-double-join (§12.4.3.2 N5).
+// Used for anti-double-join (§12.4.3.2).
 func findLeafBySignatureKey(rt *tree.RatchetTree, sigKey []byte) (uint32, bool) {
 	for i := uint32(0); i < rt.LeafCount(); i++ {
 		ln, err := rt.LeafNodeAt(i)

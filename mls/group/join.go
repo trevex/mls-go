@@ -22,17 +22,17 @@ type JoinOptions struct {
 }
 
 // JoinFromWelcome processes a Welcome MLSMessage and returns the joined Group
-// at its initial epoch (RFC 9420 §12.4.3.1). The exact sequence follows N1 in
-// the plan; each step is verified to reproduce initial_epoch_authenticator for
-// all 16 registered-suite passive-client-welcome.json cases.
+// at its initial epoch (RFC 9420 §12.4.3.1). Each step is verified to reproduce
+// initial_epoch_authenticator for all 16 registered-suite
+// passive-client-welcome.json cases.
 func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Group, error) {
-	// N1 step 1: Parse the Welcome MLSMessage envelope.
+	// step 1: Parse the Welcome MLSMessage envelope.
 	w, err := DecodeWelcomeMessage(welcome)
 	if err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: parse Welcome: %w", err)
 	}
 
-	// N1 step 2: Parse our KeyPackage; compute our KeyPackageRef and select the
+	// step 2: Parse our KeyPackage; compute our KeyPackageRef and select the
 	// matching EncryptedGroupSecrets entry.
 	kp, err := DecodeKeyPackageMessage(opt.KeyPackage)
 	if err != nil {
@@ -53,8 +53,8 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: no EncryptedGroupSecrets for our KeyPackageRef")
 	}
 
-	// N1 step 3: Decrypt GroupSecrets.
-	// context = encrypted_group_info (plan N1 step 3 — verified).
+	// step 3: Decrypt GroupSecrets.
+	// context = encrypted_group_info (verified).
 	gsBytes, err := suite.DecryptWithLabel(
 		opt.InitPriv,
 		"Welcome",
@@ -70,7 +70,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: unmarshal GroupSecrets: %w", err)
 	}
 
-	// N1 step 4: Resolve PSKs → psk_secret.
+	// step 4: Resolve PSKs → psk_secret.
 	psks := make([]keyschedule.PSK, 0, len(gs.PSKs))
 	for _, id := range gs.PSKs {
 		if id.PSKType != keyschedule.PSKTypeExternal {
@@ -87,9 +87,9 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: PSKSecret: %w", err)
 	}
 
-	// N1 step 5: Derive welcome key/nonce; decrypt GroupInfo.
+	// step 5: Derive welcome key/nonce; decrypt GroupInfo.
 	// member = Extract(salt=joiner_secret, IKM=psk_secret); welcome_secret = DeriveSecret(member, "welcome").
-	// AAD is empty (plan N1 step 5 — verified).
+	// AAD is empty (verified).
 	member, err := suite.Extract(gs.JoinerSecret, pskSecret)
 	if err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: Extract(joiner,psk): %w", err)
@@ -111,7 +111,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: unmarshal GroupInfo: %w", err)
 	}
 
-	// N1 step 6: Install the ratchet tree.
+	// step 6: Install the ratchet tree.
 	var rtreeData []byte
 	if len(opt.RatchetTree) > 0 {
 		rtreeData = opt.RatchetTree
@@ -126,7 +126,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: ParseRatchetTree: %w", err)
 	}
 
-	// N1 step 7: Validate tree + tree-hash binding.
+	// step 7: Validate tree + tree-hash binding.
 	if ok, err := rt.VerifyParentHashes(); err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: VerifyParentHashes: %w", err)
 	} else if !ok {
@@ -144,7 +144,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 			treeHash, gi.GroupContext.TreeHash)
 	}
 
-	// N1 step 8: Verify GroupInfo signature using the signer leaf's key.
+	// step 8: Verify GroupInfo signature using the signer leaf's key.
 	signerLeaf, err := rt.LeafNodeAt(gi.Signer)
 	if err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: signer leaf %d: %w", gi.Signer, err)
@@ -155,7 +155,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: GroupInfo signature invalid")
 	}
 
-	// N1 step 9: Find own leaf; build TreeKEMPrivate; optionally install path secret.
+	// step 9: Find own leaf; build TreeKEMPrivate; optionally install path secret.
 	ownLeaf, ok := rt.FindLeafByEncryptionKey(kp.LeafNode.EncryptionKey)
 	if !ok {
 		return nil, fmt.Errorf("group: JoinFromWelcome: own encryption key not found in tree")
@@ -167,7 +167,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		}
 	}
 
-	// N1 step 10: Derive epoch secrets from joiner_secret.
+	// step 10: Derive epoch secrets from joiner_secret.
 	gcBytes, err := gi.GroupContext.MarshalMLS()
 	if err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: marshal GroupContext: %w", err)
@@ -177,13 +177,13 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: EpochSecretsFromJoiner: %w", err)
 	}
 
-	// N1 step 11: Verify confirmation_tag.
+	// step 11: Verify confirmation_tag.
 	ct := keyschedule.ConfirmationTag(suite, es.ConfirmationKey, gi.GroupContext.ConfirmedTranscriptHash)
 	if !bytes.Equal(ct, gi.ConfirmationTag) {
 		return nil, fmt.Errorf("group: JoinFromWelcome: confirmation_tag mismatch")
 	}
 
-	// N1 step 12: Initialize interim transcript hash.
+	// step 12: Initialize interim transcript hash.
 	interim, err := keyschedule.InterimTranscriptHash(suite, gi.GroupContext.ConfirmedTranscriptHash, gi.ConfirmationTag)
 	if err != nil {
 		return nil, fmt.Errorf("group: JoinFromWelcome: InterimTranscriptHash: %w", err)
@@ -195,7 +195,7 @@ func JoinFromWelcome(suite cipher.Suite, welcome []byte, opt JoinOptions) (*Grou
 		return nil, fmt.Errorf("group: JoinFromWelcome: NewSecretTree: %w", err)
 	}
 
-	// N1 step 13: epoch_authenticator = es.EpochAuthenticator — verified to equal
+	// step 13: epoch_authenticator = es.EpochAuthenticator — verified to equal
 	// initial_epoch_authenticator for all 16 registered-suite KAT cases.
 	//
 	// Seed the resumption PSK history with the joined epoch so that ProcessCommit

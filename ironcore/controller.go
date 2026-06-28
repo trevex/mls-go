@@ -45,7 +45,7 @@ type KeyPackageResolver func(identity []byte) (kpMsg []byte, ok bool)
 type ControllerConfig struct {
 	VNI       uint32
 	Suite     cipher.Suite
-	Ordering  group.Ordering            // the single linearization point (Plan 11)
+	Ordering  group.Ordering            // the single linearization point
 	Clock     group.Clock               // injectable; the controller never reads wall-clock
 	Validator group.CredentialValidator // AS: maps a leaf credential → verified identity
 	Cred      tree.Credential           // this node's own credential
@@ -393,7 +393,7 @@ func (c *Controller) rotateSA() error {
 }
 
 // commitAndOrder performs an optimistic commit then reserves the epoch slot via
-// the Ordering register (design spec §5.1 / N5). On win: rotateSA and return
+// the Ordering register (design spec §5.1). On win: rotateSA and return
 // won=true. On loss (ok=false from AcceptCommit): return won=false; the in-place
 // epoch advance is a dead fork branch — the caller must AutoRecover.
 func (c *Controller) commitAndOrder(ctx context.Context, byValue []group.Proposal) (commitMsg, welcomeMsg []byte, won bool, err error) {
@@ -464,7 +464,7 @@ func memberCommitBody(commitMsg []byte) ([]byte, bool) {
 }
 
 // commitRemovesSelf reports whether the framed member commit contains a by-value
-// Remove of this node's own leaf (design spec N4). Returns false for any
+// Remove of this node's own leaf. Returns false for any
 // parse error or non-member commit.
 func (c *Controller) commitRemovesSelf(commitMsg []byte) bool {
 	body, ok := memberCommitBody(commitMsg)

@@ -221,8 +221,8 @@ func skimCommit(c *syntax.Cursor) error {
 }
 
 // skimProposal advances over Proposal = { ProposalType msg_type; select body }
-// (RFC 9420 §6/§12.1). Add proposals embed a KeyPackage, which framing does
-// not yet parse (Plan 8 / Welcome); they are rejected.
+// (RFC 9420 §6/§12.1), skimming each proposal-type body so the cursor lands on
+// the next field. Add embeds a KeyPackage (skimKeyPackage), Update a LeafNode.
 func skimProposal(c *syntax.Cursor) error {
 	pt, err := c.ReadUint16()
 	if err != nil {

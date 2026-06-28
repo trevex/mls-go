@@ -31,7 +31,7 @@ type kpEntry struct {
 }
 
 // kpDirectory maps identity → credential/signer and (identity,vni) → KeyPackage
-// material (design spec N2 / §10.3).
+// material (design spec §10.3).
 type kpDirectory struct {
 	creds   map[string]tree.Credential
 	signers map[string]crypto.Signer

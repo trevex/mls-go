@@ -26,7 +26,7 @@ type CommitOptions struct {
 // and (if any members were added) the Welcome MLSMessage bytes
 // (RFC 9420 §12.4/§12.4.3.1).
 //
-// The two-GroupContext rule (N0): encGC uses the OLD confirmed_transcript_hash
+// The two-GroupContext rule: encGC uses the OLD confirmed_transcript_hash
 // for the UpdatePath HPKE context; newGC uses the NEW confirmed_transcript_hash
 // for the key schedule and confirmation_tag. Both are at epoch=n+1 with the
 // post-path tree hash.
@@ -104,7 +104,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 	}
 
 	// Step 3: Generate the UpdatePath. Use the OLD confirmed_transcript_hash
-	// for the HPKE encryption context (encGC, the #1 trap per N0).
+	// for the HPKE encryption context (encGC, the #1 two-GroupContext trap).
 	leafSecret := make([]byte, g.suite.HashLen())
 	if _, err := rand.Read(leafSecret); err != nil {
 		return nil, nil, fmt.Errorf("group: Commit: rand.Read(leafSecret): %w", err)
@@ -118,7 +118,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 			GroupID:                 g.groupContext.GroupID,
 			Epoch:                   g.groupContext.Epoch + 1,
 			TreeHash:                treeHash,
-			ConfirmedTranscriptHash: oldConfirmed, // OLD — N0
+			ConfirmedTranscriptHash: oldConfirmed, // OLD
 			Extensions:              provisionalExt,
 		}
 		return encGC.MarshalMLS()
@@ -165,7 +165,7 @@ func (g *Group) Commit(opt CommitOptions) (commit []byte, welcome []byte, err er
 		GroupID:                 g.groupContext.GroupID,
 		Epoch:                   g.groupContext.Epoch + 1,
 		TreeHash:                newTreeHash,
-		ConfirmedTranscriptHash: confirmed, // NEW — N0
+		ConfirmedTranscriptHash: confirmed, // NEW
 		Extensions:              provisionalExt,
 	}
 	newGCBytes, err := newGC.MarshalMLS()

@@ -220,16 +220,16 @@ func (g *Group) resolveOwnUpdatePriv(cm Commit, cache map[string]cachedProposal,
 // the commit's authentication and confirmation_tag and returns an error (leaving
 // g unchanged) on any failure (RFC 9420 §12.4).
 //
-// The exact sequence follows N2/N3/N5 from the plan:
+// The exact sequence:
 //   - Two GroupContexts differ ONLY in confirmed_transcript_hash (encryption=old,
-//     key-schedule=new), both at epoch=n+1 with the post-path tree hash (N3).
+//     key-schedule=new), both at epoch=n+1 with the post-path tree hash.
 //   - confirmed_transcript_hash input = wire_format || FramedContent || signature
-//     (N5, via keyschedule.SplitAuthenticatedContent).
+//     (via keyschedule.SplitAuthenticatedContent).
 //   - ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent)
 //     (RFC 9420 §12.4 / §5.2 — over the full AuthenticatedContent bytes, NOT the
 //     bare Proposal body).
 func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
-	// N2 step 1: Build proposal cache from the by-reference proposals.
+	// step 1: Build proposal cache from the by-reference proposals.
 	// Each proposal is a PublicMessage whose AuthenticatedContent bytes serve as
 	// the input to RefHash("MLS 1.0 Proposal Reference", …) (RFC 9420 §12.4/§5.2).
 	cache := make(map[string]cachedProposal, len(proposals))
@@ -269,7 +269,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		cache[string(ref)] = cachedProposal{proposal: prop, sender: senderLeaf}
 	}
 
-	// N2 step 2: Authenticate the commit (PublicMessage, member sender).
+	// step 2: Authenticate the commit (PublicMessage, member sender).
 	var m framing.MLSMessage
 	if err := m.UnmarshalMLS(commit); err != nil {
 		return fmt.Errorf("group: ProcessCommit: parse commit: %w", err)
@@ -299,13 +299,13 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 			ac.Content.Epoch, g.groupContext.Epoch)
 	}
 
-	// N2 step 3: Parse the Commit body.
+	// step 3: Parse the Commit body.
 	var cm Commit
 	if err := cm.UnmarshalMLS(ac.Content.Content); err != nil {
 		return fmt.Errorf("group: ProcessCommit: parse Commit body: %w", err)
 	}
 
-	// N2 step 4: Resolve proposals + apply in §12.3 order on a working clone.
+	// step 4: Resolve proposals + apply in §12.3 order on a working clone.
 	wt, err := g.tree.Clone()
 	if err != nil {
 		return fmt.Errorf("group: ProcessCommit: clone tree: %w", err)
@@ -343,7 +343,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		workingPriv = tree.NewTreeKEMPrivate(g.ownLeaf, ownUpdatePriv)
 	}
 
-	// N2 step 5 (transcript part, N5): Compute the provisional confirmed
+	// step 5 (transcript part): Compute the provisional confirmed
 	// transcript hash from the commit's AuthenticatedContent.
 	// confirmed = Hash(interim[n-1] || wire_format || FramedContent || signature)
 	acBytes, err := ac.MarshalMLS()
@@ -356,8 +356,8 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 	}
 	confirmed := keyschedule.ConfirmedTranscriptHash(g.suite, g.interim, confirmedInput)
 
-	// N2 step 5 (path part): Process the UpdatePath if present.
-	// THE #1 TRAP (N3): encGC uses the OLD confirmed_transcript_hash (epoch n);
+	// step 5 (path part): Process the UpdatePath if present.
+	// THE #1 TRAP: encGC uses the OLD confirmed_transcript_hash (epoch n);
 	// newGC uses the NEW confirmed_transcript_hash. Both use epoch=n+1 and the
 	// post-path tree hash.
 	var commitSecret []byte
@@ -386,7 +386,7 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 			GroupID:                 g.groupContext.GroupID,
 			Epoch:                   g.groupContext.Epoch + 1,
 			TreeHash:                newTreeHash,
-			ConfirmedTranscriptHash: g.groupContext.ConfirmedTranscriptHash, // OLD — N3
+			ConfirmedTranscriptHash: g.groupContext.ConfirmedTranscriptHash, // OLD
 			Extensions:              provisionalExt,
 		}
 		encGCBytes, gcErr := encGC.MarshalMLS()
@@ -420,15 +420,15 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		}
 	}
 
-	// N2 step 6: Advance the key schedule using the NEW confirmed_transcript_hash.
-	// newGC and encGC differ ONLY in confirmed_transcript_hash (N3).
+	// step 6: Advance the key schedule using the NEW confirmed_transcript_hash.
+	// newGC and encGC differ ONLY in confirmed_transcript_hash.
 	newGC := keyschedule.GroupContext{
 		Version:                 g.groupContext.Version,
 		CipherSuite:             g.groupContext.CipherSuite,
 		GroupID:                 g.groupContext.GroupID,
 		Epoch:                   g.groupContext.Epoch + 1,
 		TreeHash:                newTreeHash,
-		ConfirmedTranscriptHash: confirmed, // NEW — N3
+		ConfirmedTranscriptHash: confirmed, // NEW
 		Extensions:              provisionalExt,
 	}
 	newGCBytes, gcErr := newGC.MarshalMLS()
@@ -444,19 +444,19 @@ func (g *Group) ProcessCommit(proposals [][]byte, commit []byte) error {
 		return fmt.Errorf("group: ProcessCommit: DeriveEpochSecrets: %w", esErr)
 	}
 
-	// N2 step 7: Verify confirmation_tag — reject the commit on mismatch (§12.4).
+	// step 7: Verify confirmation_tag — reject the commit on mismatch (§12.4).
 	expectedConfTag := keyschedule.ConfirmationTag(g.suite, es.ConfirmationKey, confirmed)
 	if !bytes.Equal(expectedConfTag, confTag) {
 		return fmt.Errorf("group: ProcessCommit: confirmation_tag mismatch")
 	}
 
-	// N2 step 8: Chain transcript hashes.
+	// step 8: Chain transcript hashes.
 	interim, interimErr := keyschedule.InterimTranscriptHash(g.suite, confirmed, confTag)
 	if interimErr != nil {
 		return fmt.Errorf("group: ProcessCommit: InterimTranscriptHash: %w", interimErr)
 	}
 
-	// Rebuild private TreeKEM state from the decrypted path secret (N4).
+	// Rebuild private TreeKEM state from the decrypted path secret.
 	// The path secret lives at commonAncestor(2*ownLeaf, 2*committerLeaf).
 	var newPriv *tree.TreeKEMPrivate
 	if cm.Path != nil && decryptedPS != nil {

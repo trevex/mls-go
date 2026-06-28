@@ -20,7 +20,7 @@ var ErrRecoverySuperseded = errors.New("ironcore: recovery superseded by a concu
 
 // RecoverViaExternalCommit re-converges a stale/losing VNIGroup onto the
 // canonical branch after a fork (design spec §5.6). It picks the canonical
-// branch deterministically (lowest Hash(CommitRef), Plan 11 tie-break), builds
+// branch deterministically (lowest Hash(CommitRef) tie-break), builds
 // an external Commit from that branch's signed GroupInfo (anti-double-join
 // Remove of the loser's stale leaf is handled by group.ExternalCommit), and
 // routes the recovery commit through the SINGLE Ordering linearization point so

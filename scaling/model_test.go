@@ -85,3 +85,61 @@ func TestDataPlaneSACountParity(t *testing.T) {
 		t.Fatal("data-plane SA parity broken: IKEv2 and MLS must match (topology-bound)")
 	}
 }
+
+func TestPacketsPerCommitCeil(t *testing.T) {
+	p := baseParams()
+	p.BytesPerCommit = 30000
+	p.MTUPayload = 1460
+	if got := Project(p).PacketsPerCommit; got != 21 { // ceil(30000/1460)=21
+		t.Fatalf("PacketsPerCommit = %d, want 21", got)
+	}
+	p.MTUPayload = 0 // disabled
+	if got := Project(p).PacketsPerCommit; got != 0 {
+		t.Fatalf("MTU=0 must disable pps, got PacketsPerCommit=%d", got)
+	}
+	if got := Project(p).ReflectorFwdPktsPerSec; got != 0 {
+		t.Fatalf("MTU=0 must zero ReflectorFwdPktsPerSec, got %v", got)
+	}
+}
+
+func TestReflectorPktsScaleWithFanoutAndPackets(t *testing.T) {
+	p := baseParams()
+	p.MTUPayload = 1460
+	proj := Project(p)
+	rate := p.RRekey + p.LambdaMove
+	want := float64(p.V) * rate * float64(p.M-1) * float64(proj.PacketsPerCommit)
+	if proj.ReflectorFwdPktsPerSec != want {
+		t.Fatalf("ReflectorFwdPktsPerSec = %v, want %v", proj.ReflectorFwdPktsPerSec, want)
+	}
+}
+
+func TestPktSaturationFlag(t *testing.T) {
+	p := baseParams()
+	p.MTUPayload = 1460
+	p.PktBudgetPerSec = 1 // tiny ⇒ saturated
+	if !Project(p).ReflectorPktSaturated {
+		t.Fatal("expected ReflectorPktSaturated=true under tiny pkt budget")
+	}
+	p.PktBudgetPerSec = 1e15 // huge ⇒ not saturated
+	if Project(p).ReflectorPktSaturated {
+		t.Fatal("expected ReflectorPktSaturated=false under huge pkt budget")
+	}
+}
+
+func TestHostCommitCPUFlatInV(t *testing.T) {
+	// Committer CPU depends on VNIs-per-host (V/H). Holding V/H fixed, it must not
+	// change; it must scale with cpu_per_commit.
+	p := baseParams()
+	p.CPUCommitNanos = 4_000_000 // 4ms
+	rate := p.RRekey + p.LambdaMove
+	want := (float64(p.V) / float64(p.H)) * rate * float64(p.CPUCommitNanos) / 1e9
+	if got := Project(p).HostCommitCPUFracBusy; got != want {
+		t.Fatalf("HostCommitCPUFracBusy = %v, want %v", got, want)
+	}
+	p2 := p
+	p2.V *= 10
+	p2.H *= 10 // V/H unchanged
+	if Project(p2).HostCommitCPUFracBusy != want {
+		t.Fatalf("committer CPU not flat at fixed V/H: %v vs %v", Project(p2).HostCommitCPUFracBusy, want)
+	}
+}

@@ -45,3 +45,31 @@ func TestCSVHasHeaderAndRows(t *testing.T) {
 		t.Fatalf("unexpected CSV header: %q", lines[0])
 	}
 }
+
+func TestPktKneeSmallestSaturatingV(t *testing.T) {
+	base := baseParams()
+	base.MTUPayload = 1460
+	base.PktBudgetPerSec = 1e4 // low pps budget so some V saturates
+	rows := Sweep(base, []int{1000}, []int{1000, 10000, 100000, 1000000})
+	knee, found := PktKnee(rows)
+	if !found {
+		t.Fatal("expected a pkt knee under a low pps budget")
+	}
+	for _, r := range rows {
+		if r.V < knee && r.MLS.ReflectorPktSaturated {
+			t.Fatalf("V=%d pkt-saturated below reported pkt knee V=%d", r.V, knee)
+		}
+	}
+}
+
+func TestCSVHasPktColumns(t *testing.T) {
+	base := baseParams()
+	base.MTUPayload = 1460
+	csv := CSV(Sweep(base, []int{1000}, []int{1000}))
+	header := strings.SplitN(csv, "\n", 2)[0]
+	for _, col := range []string{"host_commit_cpu_frac_busy", "packets_per_commit", "reflector_fwd_pkts_per_s", "reflector_pkt_saturated"} {
+		if !strings.Contains(header, col) {
+			t.Fatalf("CSV header missing %q: %s", col, header)
+		}
+	}
+}

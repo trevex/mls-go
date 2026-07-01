@@ -30,12 +30,17 @@ The two scarce resources scale on **different axes**:
   VNIs-per-host is `D = V·M / H`. A host in `D` VNIs bears `D` VNIs' commit
   rate regardless of how many VNIs exist elsewhere.
 - **Reflector load is Σ-bounded.** A reflector must forward and linearize
-  commits for every VNI it serves — linear in `V`. This is unbounded unless
-  metalbond **shards** VNIs across a reflector *fleet* (the metalbond pair is
-  redundancy *within* a shard, not a scaling unit). Reflector shard count `S`
-  is therefore a first-class knob of the model, not an afterthought.
+  commits for every VNI it serves — linear in `V`. **Metalbond does not shard
+  today**: the reflector is a single redundant pair, so the baseline is `S = 1`
+  and reflector load is the *full* `V·(r_rekey + λ_move)·(M−1)` fan-out. The
+  sweep's headline is therefore the `V` at which that single reflector
+  saturates a forwarding budget — the number that would *motivate* sharding.
 
-Surfacing the sharding requirement is itself half the deliverable.
+Sharding is a **deferred future optimization**, not part of the baseline. The
+model keeps shard count `S` as a parameter (default `1`) purely so "what would
+sharding buy" is answerable later; every baseline sweep and the fit verdict run
+at `S = 1`. Surfacing *when* a single reflector saturates is half the
+deliverable.
 
 ## Why three tiers
 
@@ -74,9 +79,12 @@ host_SA_installs/s      = host_apply/s                               # one XFRM/
 host_state_bytes        ≈ D · state_per_group(M)
 ```
 
-Swept over `H`, `V`, and `S`. Emits CSV; the **knee** is where per-shard
-`reflector_fwd_bytes/s` or `reflector_order_ops/s` exceeds a configurable
-forwarding budget.
+Swept over `H` and `V` at the baseline `S = 1` (the redundant single reflector
+metalbond has today). Emits CSV; the **knee** is where `reflector_fwd_bytes/s`
+or `reflector_order_ops/s` exceeds a configurable forwarding budget — i.e. the
+`V` at which the single reflector saturates. `S` remains a parameter so a
+follow-up sweep can quantify what sharding would buy, but that is out of
+baseline scope.
 
 **IKEv2 analytical overlay** — same `(H, V, M, λ)` points:
 
@@ -123,9 +131,11 @@ Three falsifiable numbers across the datacenter envelope:
 
 1. **Host load density-bounded** — `D·rate`, flat in `V` ⇒ hosts are fine iff
    `D` is bounded.
-2. **Reflector load Σ-bounded** — linear in `V/S` ⇒ MLS is a good fit **iff
-   metalbond shards VNIs across a reflector fleet**; the model reports the
-   required `S` for a given forwarding budget.
+2. **Reflector load Σ-bounded** — linear in `V` at the single-reflector
+   baseline (`S = 1`). The model reports the `V` at which the single reflector
+   saturates a given forwarding budget; if that `V` is beyond the target
+   envelope, MLS fits as-is, and if not, that number is the concrete trigger
+   for the deferred sharding optimization.
 3. **Convergence under churn** — `commit_to_converge_ticks < churn_inter_arrival`
    at target `λ_move`.
 

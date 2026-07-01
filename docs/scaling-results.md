@@ -109,6 +109,64 @@ exactly the axis the knee above quantifies.
 
 ---
 
+## Tier 2b — Packets and CPU (the reflector's real limits)
+
+On modern fabrics (100 G links) reflector **bytes** are a non-issue; the binding
+resources are **packets/s** and **CPU**. The key structural fact:
+
+> **The reflector runs no MLS crypto — it is a blind relay of ciphertext.** Its
+> only cost is packet fan-out (`(M−1)` copies per commit) plus sequencing. All
+> per-commit crypto lives on the hosts: the committer *generates* the commit, the
+> members *apply* it, spread across the fleet.
+
+`scalebench` projects this directly: `-mtu` fragments each commit into
+`ceil(bytes/MTU)` packets and reports `reflector_fwd_pkts_per_s`; `-pkt-budget-pps`
+adds a packet-rate knee (`VERDICT(pps)`); `-cpu-commit-ms` / `-cpu-apply-ms` (from
+`make bench`, machine-dependent) project committer and host-apply CPU as a
+fraction of one core.
+
+**Extreme churn: 100 VM churns/s across the whole fabric** (`H = 1000`,
+`V = 10 000`, `M = 20`). Counting each migration as leave+join = **200 commits/s**
+fleet-wide (`-move-s 50`), measured CPU `cpu_commit = 2.05/3.97 ms`,
+`cpu_apply ≈ 0.55/1.1 ms` (classical/X-Wing):
+
+| resource (per reflector / per host) | classical | X-Wing |
+|---|---|---|
+| Reflector fan-out (3 800 msgs/s) | 7 600 pps @1500 · 3 800 @9000 | **80 908 pps @1500** · 15 411 @9000 |
+| Host-apply CPU (4 applies/s/host) | 0.22 % of a core | 0.45 % of a core |
+| Committer CPU (distributed) | 0.04 %/host | 0.08 %/host |
+
+Everything is 2–3 orders of magnitude below any limit. Packets fragment worst for
+X-Wing (30 KB commit → 21 packets at 1500 MTU), but 81 k pps is nothing for a NIC
+that does millions.
+
+**Where packets/CPU actually bind — ceilings (max commits/s):**
+
+| binding resource | classical | X-Wing |
+|---|---|---|
+| **Reflector fan-out pps** (@1 Mpps, conservative SW) | 26 000 | **2 500 @1500 · 13 000 @9000** ← lowest |
+| Host-apply CPU (@10 % core/host) | ~9 000 | ~4 500 |
+| Committer CPU (@10 % core × 1000 hosts) | ~4 900 | ~2 500 |
+
+The lowest ceiling is **X-Wing reflector fan-out pps at standard MTU: ~2 500
+commits/s ≈ 1 250 migrations/s — still ~12× above the 100 VMs/s extreme.** It is
+lowest because two factors stack: the `(M−1) = 19` fan-out multiplier *and*
+X-Wing's 30 KB commits fragmenting into ~21 packets each. Three cheap levers, best
+bang-for-buck first:
+
+1. **Jumbo frames (9000 MTU)** — X-Wing packets 21 → 4, lifting the pps ceiling
+   **5×** (2 500 → 13 000 commits/s). Nearly free; the biggest single win.
+2. **A real reflector** — 1 Mpps is a conservative *software* figure;
+   DPDK/kernel-bypass reflectors do 10–100 Mpps → 25 k–250 k commits/s.
+3. **Sharding** (the deferred one) — linear in per-reflector commits/s.
+
+**Watch item:** fan-out pps scales linearly with **M** (the `(M−1)` term). At
+`M = 20` it is comfortable; a large tenant VNI (`M = 100+`) fans each commit to
+~100 subscribers, so that VNI's reflector pps grows proportionally. The commit
+*rate* stays tiny; the *fan-out multiplier* is what concentrates at the reflector.
+
+---
+
 ## Tier 3 — Sim validation (real stack, tractable scale)
 
 `make sim` / `metalsim -scenario migration_churn` runs the real MLS crypto under

@@ -1374,7 +1374,7 @@ Create `docs/scaling-results.md` capturing:
 - The measured Tier-1 constants table: `bytes_per_commit(M)` and `bytes_per_welcome(M)` for classical + X-Wing at M ∈ {2,8,32,128} (fill from `nix develop -c go test ./bench/ -run '^$' -bench . -benchmem` and a short throwaway that prints `bench.MeasureCommitBytes`), and representative `ns/op` for commit/apply.
 - The Tier-2 verdict numbers from `make scalebench`: the V-knee at S=1 for both suites at the default budget, and the host density D at the datacenter corner (H=10⁴, V=10⁵, M=20 ⇒ D=200).
 - The three fit-verdict numbers from the design spec: host load density-bounded (flat in V), reflector load linear in V with its knee, and the sim's `max-converge-ticks` vs churn inter-arrival from `nix develop -c go run ./cmd/metalsim -scenario migration_churn`.
-- A short paragraph connecting back to `comment.md`'s scaling section: the measured constants that replace the `O()` terms, and whether the datacenter envelope sits below or above the single-reflector knee.
+- A short paragraph connecting back to the `O(N²)`-vs-MLS scaling argument: the measured constants that replace the `O()` terms, and whether the datacenter envelope sits below or above the single-reflector knee.
 
 Keep it factual and sourced from actual command output (use `verification-before-completion` — paste real numbers, do not estimate).
 

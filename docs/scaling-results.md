@@ -1,8 +1,8 @@
 # MLS-per-VNI Scaling Benchmark — Measured Results
 
-**Purpose:** turn the `O()` claims in `comment.md`'s scaling section into concrete,
-measured constants and a falsifiable "MLS is / isn't a good fit" verdict for a
-datacenter-scale envelope. Design and methodology:
+**Purpose:** turn the `O()` scaling claims for MLS-per-VNI key agreement into
+concrete, measured constants and a falsifiable "MLS is / isn't a good fit"
+verdict for a datacenter-scale envelope. Design and methodology:
 [`docs/superpowers/specs/2026-07-01-scaling-benchmark-design.md`](superpowers/specs/2026-07-01-scaling-benchmark-design.md).
 
 All numbers below are copied from actual command output on an AMD Ryzen 7 7840U
@@ -233,24 +233,25 @@ extreme `V = 10⁵` corner.
 
 ---
 
-## Tie-back to `comment.md`
+## Tie-back to the `O(N²)` scaling argument
 
-`comment.md`'s scaling table asserted MLS moves cost off the `O(N²)` interactive
-handshake axis onto "metalbond reflector ordering throughput
-`≈ O(#VNIs × rotation_rate)`". These measurements put constants on that claim:
+The motivating claim is that MLS moves cost off the `O(N²)` interactive-handshake
+axis (pairwise IKEv2) and onto reflector fan-out throughput
+`≈ O(#VNIs × rotation_rate)`. These measurements put constants on that claim:
 
 - The `O(log M)`/`O(M)` per-commit terms are now numbers:
   **bytes_per_commit(M=20) = 2088 B classical, 29891 B X-Wing (~14.3×)**, with
   sub-to-low-millisecond CPU per event.
-- The reflector concentration `comment.md` flagged as "where the cost moves" has
-  a measured saturation point: at the default 100 MB/s budget the single
-  reflector **stays under budget for classical across the whole `H ≤ 10⁴`,
-  `V ≤ 10⁵` envelope**, and for X-Wing sits **just above the knee only at the
-  `V = 10⁵` extreme (110.4 MB/s)**.
+- The reflector concentration — "where the cost moves" — has a measured
+  saturation point: at the default 100 MB/s budget the single reflector **stays
+  under budget for classical across the whole `H ≤ 10⁴`, `V ≤ 10⁵` envelope**,
+  and for X-Wing sits **just above the knee only at the `V = 10⁵` extreme
+  (110.4 MB/s)**. On a packet/CPU basis (Tier 2b) there is ~12× more headroom
+  still, with jumbo frames a further 5×.
 
 So for the classical suite the datacenter envelope sits **below** the
 single-reflector knee — MLS fits as-is and **sharding is not required**. For the
-post-quantum X-Wing suite the envelope reaches the knee exactly at the top corner
-(`V = 10⁵`), which is the precise, quantified trigger for the sharding
-optimization that `comment.md` deferred as future work — not a reason to abandon
-the design, but the number that tells you *when* to shard.
+post-quantum X-Wing suite the envelope reaches the byte knee exactly at the top
+corner (`V = 10⁵`), the precise, quantified trigger for the deferred sharding
+optimization — not a reason to abandon the design, but the number that tells you
+*when* to shard.

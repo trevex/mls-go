@@ -10,7 +10,7 @@ Answer, with measured numbers rather than asymptotics: **as metalnet scales
 load does the MLS-per-VNI design impose on (a) metalbond reflectors and (b)
 metalnet hosts, and how does that compare to a pairwise-IKEv2 baseline?**
 
-The output must turn the `O()` claims in `comment.md`'s scaling section into
+The output must turn the `O()` scaling claims for MLS-per-VNI key agreement into
 concrete constants, and produce a falsifiable "MLS is / isn't a good fit"
 verdict for a datacenter-scale envelope.
 
@@ -93,8 +93,8 @@ baseline scope.
   round trips + half-open state (no reflector, but O(M²) mesh per VNI).
 - Data-plane SA count: **identical** to MLS (topology-bound, not keying-bound).
 
-Output: one head-to-head CSV backing the `comment.md` table with *measured* MLS
-constants vs *modeled* IKEv2.
+Output: one head-to-head CSV backing the `O(N²)`-vs-MLS scaling comparison with
+*measured* MLS constants vs *modeled* IKEv2.
 
 ### Tier 3 — Sim validation (real stack, tractable scale)
 
@@ -151,7 +151,7 @@ quantified reason it isn't.
   convergence-vs-inter-arrival check, and a validation test asserting the sim's
   measured rates match Tier-2's prediction at a shared point.
 - A short results write-up (constants + the three verdict numbers) suitable as
-  further input to the `comment.md` scaling section.
+  further input to the `O(N²)`-vs-MLS scaling discussion.
 
 ## Non-goals
 

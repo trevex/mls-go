@@ -11,22 +11,22 @@ import (
 
 // Metrics holds deterministic counters + measured (non-scheduling) CPU timing.
 type Metrics struct {
-	Delivered       int
-	Reflected       int
-	CtrlDropped     int
-	DataDropped     int // transport loss (NOT a key-loss failure)
-	Blocked         int
-	CatchupRequests int
-	LogRetransmits  int
-	CommitRejected  int // commits dropped by a reflector's local register (dedup / loser)
-	CommitResends   int // committer resends of an unconfirmed head commit (drop recovery)
-	DataSent        int
-	DataDecryptable int
-	CommitMsgs      int
-	CommitBytes     int
-	MaxOverlap      int    // max |saCache| observed (the W actually needed +1)
-	MaxSendLag      uint64 // max (currentEpoch - sendEpoch) observed
-	PlaintextHandshakeExposures int // member handshakes a reflector saw as PublicMessage in an encrypted VNI
+	Delivered                   int
+	Reflected                   int
+	CtrlDropped                 int
+	DataDropped                 int // transport loss (NOT a key-loss failure)
+	Blocked                     int
+	CatchupRequests             int
+	LogRetransmits              int
+	CommitRejected              int // commits dropped by a reflector's local register (dedup / loser)
+	CommitResends               int // committer resends of an unconfirmed head commit (drop recovery)
+	DataSent                    int
+	DataDecryptable             int
+	CommitMsgs                  int
+	CommitBytes                 int
+	MaxOverlap                  int    // max |saCache| observed (the W actually needed +1)
+	MaxSendLag                  uint64 // max (currentEpoch - sendEpoch) observed
+	PlaintextHandshakeExposures int    // member handshakes a reflector saw as PublicMessage in an encrypted VNI
 
 	// Per-actor / per-tick control-plane rate accounting (Tier-3 scaling metrics).
 	CommitsIssued    int    // commits a committer originated (new heads, not resends)

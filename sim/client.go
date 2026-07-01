@@ -75,17 +75,17 @@ func newVNIState() *vniState {
 // VNI (one per replica channel saVNI(vni,r)); every host is a member of BOTH
 // replicas and installs BOTH replicas' SAs (rev 5 §0).
 type Client struct {
-	id          ActorID
-	suite       cipher.Suite
-	signer      crypto.Signer
-	identity    string
-	vnis        map[uint32]*vniState // keyed by channel = saVNI(vni, r)
-	bus         *Bus
-	sched       *Scheduler
-	dir         *kpDirectory
-	dsIDs       []ActorID // dsIDs[r] = reflector R_r
-	metrics     *Metrics
-	checker     *InvariantChecker
+	id                ActorID
+	suite             cipher.Suite
+	signer            crypto.Signer
+	identity          string
+	vnis              map[uint32]*vniState // keyed by channel = saVNI(vni, r)
+	bus               *Bus
+	sched             *Scheduler
+	dir               *kpDirectory
+	dsIDs             []ActorID // dsIDs[r] = reflector R_r
+	metrics           *Metrics
+	checker           *InvariantChecker
 	W                 int  // SA-overlap depth (make-before-break window)
 	mbbDisabled       bool // negative control: W=0 + no sender-lag
 	encryptHandshakes bool // EncryptedChurn scenario: member handshakes are PrivateMessage

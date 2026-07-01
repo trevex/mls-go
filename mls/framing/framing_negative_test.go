@@ -89,8 +89,8 @@ func TestSkimPreSharedKeyIDRejects(t *testing.T) {
 		{"external truncated psk_id", []byte{0x01}},
 		{"external truncated psk_nonce", []byte{0x01, 0x00}}, // psk_id empty, no nonce
 		{"resumption truncated usage", []byte{0x02}},
-		{"resumption truncated psk_group_id", []byte{0x02, 0x00}},                              // usage, no group_id
-		{"resumption truncated psk_epoch", []byte{0x02, 0x00, 0x00}},                           // group_id empty, no epoch
+		{"resumption truncated psk_group_id", []byte{0x02, 0x00}},                            // usage, no group_id
+		{"resumption truncated psk_epoch", []byte{0x02, 0x00, 0x00}},                         // group_id empty, no epoch
 		{"resumption truncated psk_nonce", []byte{0x02, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0}}, // epoch, no nonce
 		{"invalid psktype", []byte{0x09}},
 	}
@@ -122,7 +122,7 @@ func TestSkimCommitRejects(t *testing.T) {
 func TestSkimKeyPackageRejects(t *testing.T) {
 	ln := validLeafNodeBytes(t)
 	initKey, _ := syntax.WriteOpaqueV([]byte{0xab, 0xcd})
-	ext, _ := syntax.WriteOpaqueV(nil)            // extensions<V> empty
+	ext, _ := syntax.WriteOpaqueV(nil)                          // extensions<V> empty
 	header := append(append(u16be(1), u16be(1)...), initKey...) // version + cipher_suite + init_key
 
 	cases := []struct {
@@ -166,7 +166,7 @@ func TestDecodeSenderRejects(t *testing.T) {
 // at its leading fields and one with an invalid content type (framing.go:135).
 func TestDecodeFramedContentRejects(t *testing.T) {
 	// group_id empty + epoch(8) + sender(member,leaf 0) + auth_data empty + bad content_type.
-	badContentType := []byte{0x00}                          // group_id<V> empty
+	badContentType := []byte{0x00}                              // group_id<V> empty
 	badContentType = append(badContentType, make([]byte, 8)...) // epoch
 	badContentType = append(badContentType, 0x01, 0, 0, 0, 0)   // sender: member, leaf_index 0
 	badContentType = append(badContentType, 0x00)               // authenticated_data<V> empty

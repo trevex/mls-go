@@ -52,7 +52,7 @@ func keyPackage(s cipher.Suite, id string) group.KeyPackage {
 // own state). M must be >= 1.
 func BuildGroup(s cipher.Suite, M int) (*group.Group, error) {
 	if M < 1 {
-		return nil, fmt.Errorf("M must be >= 1, got %d", M)
+		return nil, fmt.Errorf("member count M must be >= 1, got %d", M)
 	}
 	g, err := group.NewGroup(s, []byte("bench-group"), cred("founder"), newSigner(), life())
 	if err != nil {

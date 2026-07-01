@@ -31,6 +31,14 @@ vs 2088 B classical — a ~14.3× inflation** driven by the ML-KEM-768 ciphertex
 in the TreeKEM direct path. The ratio settles at ~14× for `M ≥ 20` and is the
 single dominant fit input for the reflector-load verdict below.
 
+> **Proxy note.** The projection feeds a single `bytes_per_commit` (the `Update`
+> size above) for the *entire* `rekey + churn` commit stream, i.e. Update-commit
+> bytes stand in for Add/Remove commits too. Measured spread at `M = 20` is
+> small: X-Wing Add = 32539 B (+8.9%), Remove = 27507 B (−8%) vs Update 29891 B —
+> and a VM migration is a leave+join (Remove+Add) whose **average (30023 B) is
+> within 0.4% of the Update proxy**. The pure-rekey term is exact. So the
+> single-constant simplification does not move the borderline X-Wing knee.
+
 Representative CPU (from `make bench`, `-benchtime 5x`; machine-dependent,
 reporting only):
 
@@ -129,7 +137,10 @@ horizon                 614
   churn cadence, so MLS does not fall behind.
 
 **Realized fan-out grows with membership**, validating the `(M−1)` term in the
-Tier-2 `reflector_fwd` formula. Re-confirmed by sweeping client count:
+Tier-2 `reflector_fwd` formula. Re-confirmed by sweeping client count (via the
+`TestReflectorForwardsScaleWithMembership` helper, which regenerates the join
+plan for each client count — note `metalsim -clients N` does **not** reproduce
+these, because that flag overrides `Clients` without regenerating `Churn`):
 
 | clients | fanout-amplification |
 |-----|-----|

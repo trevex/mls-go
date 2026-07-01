@@ -50,6 +50,8 @@ func TestDeterminism(t *testing.T) {
 		MaxOverlap                                               int
 		MaxSendLag                                               uint64
 		PlaintextHandshakeExposures                              int
+		CommitsIssued, CommitDeliveries, CommitsApplied          int
+		Horizon, MaxConvergeTicks                                uint64
 	}
 	snap := func(m *Metrics) deterministicMetrics {
 		return deterministicMetrics{
@@ -58,6 +60,8 @@ func TestDeterminism(t *testing.T) {
 			m.DataSent, m.DataDecryptable, m.CommitMsgs, m.CommitBytes,
 			m.MaxOverlap, m.MaxSendLag,
 			m.PlaintextHandshakeExposures,
+			m.CommitsIssued, m.CommitDeliveries, m.CommitsApplied,
+			m.Horizon, m.MaxConvergeTicks,
 		}
 	}
 	if snap(m1) != snap(m2) {

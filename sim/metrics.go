@@ -27,12 +27,26 @@ type Metrics struct {
 	MaxOverlap      int    // max |saCache| observed (the W actually needed +1)
 	MaxSendLag      uint64 // max (currentEpoch - sendEpoch) observed
 	PlaintextHandshakeExposures int // member handshakes a reflector saw as PublicMessage in an encrypted VNI
-	cpuNanos        map[string]int64
-	cpuCount        map[string]int64
+
+	// Per-actor / per-tick control-plane rate accounting (Tier-3 scaling metrics).
+	CommitsIssued    int    // commits a committer originated (new heads, not resends)
+	CommitDeliveries int    // commit envelopes delivered to client actors (realized fan-out)
+	CommitsApplied   int    // successful HandleCommit at a member
+	Horizon          uint64 // max event tick reached (rate denominator)
+	MaxConvergeTicks uint64 // worst-case (applyTick - issueTick) over all commits
+
+	convIssuedAt map[string]uint64 // channel:epoch -> issue tick (convergence tracking)
+
+	cpuNanos map[string]int64
+	cpuCount map[string]int64
 }
 
 func newMetrics() *Metrics {
-	return &Metrics{cpuNanos: map[string]int64{}, cpuCount: map[string]int64{}}
+	return &Metrics{
+		cpuNanos:     map[string]int64{},
+		cpuCount:     map[string]int64{},
+		convIssuedAt: map[string]uint64{},
+	}
 }
 
 // cpu records measured wall time of a real crypto call (NEVER used for scheduling).
@@ -58,6 +72,37 @@ func (m *Metrics) observeSendLag(lag uint64) {
 	}
 }
 
+// FanoutAmplification is realized commit deliveries per issued commit (the
+// reflector's M-1 fan-out factor, measured).
+func (m *Metrics) FanoutAmplification() float64 {
+	if m.CommitsIssued == 0 {
+		return 0
+	}
+	return float64(m.CommitDeliveries) / float64(m.CommitsIssued)
+}
+
+func convKey(ch uint32, epoch uint64) string {
+	return fmt.Sprintf("%d:%d", ch, epoch)
+}
+
+// commitIssued records the tick a committer produced the commit for (ch, epoch).
+func (m *Metrics) commitIssued(ch uint32, epoch, tick uint64) {
+	k := convKey(ch, epoch)
+	if _, seen := m.convIssuedAt[k]; !seen {
+		m.convIssuedAt[k] = tick
+	}
+}
+
+// commitConverged records a member applying (ch, epoch) at tick, updating the
+// worst-case convergence gap.
+func (m *Metrics) commitConverged(ch uint32, epoch, tick uint64) {
+	if issued, ok := m.convIssuedAt[convKey(ch, epoch)]; ok && tick >= issued {
+		if gap := tick - issued; gap > m.MaxConvergeTicks {
+			m.MaxConvergeTicks = gap
+		}
+	}
+}
+
 // Report renders the text table (default output).
 func (m *Metrics) Report() string {
 	var b bytes.Buffer
@@ -76,6 +121,12 @@ func (m *Metrics) Report() string {
 	_, _ = fmt.Fprintf(w, "max-SA-overlap(W+1)\t%d\n", m.MaxOverlap)
 	_, _ = fmt.Fprintf(w, "max-send-lag\t%d\n", m.MaxSendLag)
 	_, _ = fmt.Fprintf(w, "plaintext-handshake-exposures\t%d\n", m.PlaintextHandshakeExposures)
+	_, _ = fmt.Fprintf(w, "commits-issued\t%d\n", m.CommitsIssued)
+	_, _ = fmt.Fprintf(w, "commit-deliveries\t%d\n", m.CommitDeliveries)
+	_, _ = fmt.Fprintf(w, "commits-applied\t%d\n", m.CommitsApplied)
+	_, _ = fmt.Fprintf(w, "fanout-amplification\t%.2f\n", m.FanoutAmplification())
+	_, _ = fmt.Fprintf(w, "max-converge-ticks\t%d\n", m.MaxConvergeTicks)
+	_, _ = fmt.Fprintf(w, "horizon\t%d\n", m.Horizon)
 	for _, op := range sortedStr(m.cpuCount) {
 		n := m.cpuCount[op]
 		avg := time.Duration(0)

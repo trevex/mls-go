@@ -247,6 +247,7 @@ func (c *Client) onDeliver(env Envelope) {
 }
 
 func (c *Client) onCommit(env Envelope) {
+	c.metrics.CommitDeliveries++
 	st := c.vnis[env.VNI]
 	if st == nil || !st.joined {
 		return
@@ -269,6 +270,8 @@ func (c *Client) onCommit(env Envelope) {
 		c.cacheCurrentSA(env.VNI)
 		c.initPeerEpochForNewMembers(env.VNI, before)
 		c.pruneDepartedPeers(env.VNI)
+		c.metrics.CommitsApplied++
+		c.metrics.commitConverged(env.VNI, st.ctrl.Epoch(), c.sched.Now())
 	case isSelfRemoved(err):
 		c.leaveVNI(env.VNI)
 	}
@@ -355,6 +358,8 @@ func (c *Client) onLogReply(env Envelope) {
 			c.cacheCurrentSA(env.VNI)
 			c.initPeerEpochForNewMembers(env.VNI, before)
 			c.pruneDepartedPeers(env.VNI)
+			c.metrics.CommitsApplied++
+			c.metrics.commitConverged(env.VNI, st.ctrl.Epoch(), c.sched.Now())
 		} else if isSelfRemoved(err) {
 			c.leaveVNI(env.VNI)
 			return
@@ -378,6 +383,8 @@ func (c *Client) sendCommit(ch uint32, base uint64, msg []byte) {
 		Hash:    contentHash(msg),
 	})
 	c.metrics.commitFanout(len(msg), 1)
+	c.metrics.CommitsIssued++
+	c.metrics.commitIssued(ch, base+1, c.sched.Now())
 }
 
 func (c *Client) sendWelcome(ch uint32, welcome []byte, added [][]byte) {

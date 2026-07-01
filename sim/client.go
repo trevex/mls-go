@@ -185,6 +185,7 @@ func (c *Client) reconcile(ch uint32, desired [][]byte) {
 		return
 	}
 	c.cacheCurrentSA(ch)
+	c.pruneDepartedPeers(ch)
 	base := st.ctrl.Epoch() - 1
 	c.recordHead(ch, base, res.CommitMsg)
 	c.sendCommit(ch, base, res.CommitMsg)
@@ -267,6 +268,7 @@ func (c *Client) onCommit(env Envelope) {
 	case err == nil:
 		c.cacheCurrentSA(env.VNI)
 		c.initPeerEpochForNewMembers(env.VNI, before)
+		c.pruneDepartedPeers(env.VNI)
 	case isSelfRemoved(err):
 		c.leaveVNI(env.VNI)
 	}
@@ -352,6 +354,7 @@ func (c *Client) onLogReply(env Envelope) {
 		if err := st.ctrl.HandleCommit(r.Bytes); err == nil {
 			c.cacheCurrentSA(env.VNI)
 			c.initPeerEpochForNewMembers(env.VNI, before)
+			c.pruneDepartedPeers(env.VNI)
 		} else if isSelfRemoved(err) {
 			c.leaveVNI(env.VNI)
 			return
@@ -484,6 +487,26 @@ func (c *Client) initPeerEpochForNewMembers(ch uint32, beforeLeaves map[string]b
 			if _, exists := st.peerEpoch[aid]; !exists {
 				st.peerEpoch[aid] = cur
 			}
+		}
+	}
+}
+
+// pruneDepartedPeers drops peerEpoch/heard entries for actors no longer in this
+// replica's active member set (e.g. removed by a Remove commit). This is the
+// symmetric counterpart to initPeerEpochForNewMembers: without it, a departed
+// member's stale (frozen) epoch would pin sendEpoch — the min over peerEpoch —
+// below the make-before-break window, so live receivers that trimmed that SA
+// could no longer decrypt (inv. 2 packet loss).
+func (c *Client) pruneDepartedPeers(ch uint32) {
+	st := c.vnis[ch]
+	if st == nil || !st.joined {
+		return
+	}
+	members := c.replicaMembers(ch)
+	for a := range st.peerEpoch {
+		if !members[a] {
+			delete(st.peerEpoch, a)
+			delete(st.heard, a)
 		}
 	}
 }

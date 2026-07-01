@@ -1,9 +1,11 @@
 package bench
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/trevex/mls-go/mls/cipher"
+	"github.com/trevex/mls-go/mls/group"
 )
 
 func classical(t *testing.T) cipher.Suite {
@@ -56,5 +58,121 @@ func TestWelcomeBytesPositive(t *testing.T) {
 	}
 	if b <= 0 {
 		t.Fatalf("welcome bytes = %d, want > 0", b)
+	}
+}
+
+// benchSuites are the suites we characterize: classical (0x0001) and PQ X-Wing.
+func benchSuites(b *testing.B) map[string]cipher.Suite {
+	b.Helper()
+	out := map[string]cipher.Suite{}
+	for name, id := range map[string]cipher.CipherSuite{
+		"classical": cipher.X25519_AES128GCM_SHA256_Ed25519,
+		"xwing":     cipher.XWING_AES256GCM_SHA256_Ed25519,
+	} {
+		s, ok := cipher.Lookup(id)
+		if !ok {
+			b.Fatalf("suite %s not registered", name)
+		}
+		out[name] = s
+	}
+	return out
+}
+
+// BenchmarkCommitUpdate measures committer cpu_per_commit(M) for an empty PCS
+// rekey across suites and sizes. Machine-dependent; reporting only.
+func BenchmarkCommitUpdate(b *testing.B) {
+	for name, s := range benchSuites(b) {
+		for _, M := range []int{2, 8, 32, 128} {
+			b.Run(fmt.Sprintf("%s/M=%d", name, M), func(b *testing.B) {
+				g, err := BuildGroup(s, M)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, _, err := g.Commit(group.CommitOptions{}); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// buildCommitterFollower returns a committer (the founder) and a real follower
+// that are both genuine members of the SAME M-member group at the same epoch.
+//
+// This differs from the naive "two independent BuildGroup results" approach:
+// BuildGroup returns only a committer and discards the added members' private
+// keys, so two separate BuildGroup groups have unrelated membership/signature
+// keys and every ProcessCommit fails membership_tag verification (a cheap,
+// meaningless early exit that never reaches the TreeKEM UpdatePath decrypt).
+// Here the follower joins from the committer's Welcome, so it can actually apply
+// the committer's commits. M must be >= 2.
+func buildCommitterFollower(s cipher.Suite, M int) (committer, follower *group.Group, err error) {
+	if M < 2 {
+		return nil, nil, fmt.Errorf("M must be >= 2, got %d", M)
+	}
+	committer, err = group.NewGroup(s, []byte("bench-group"), cred("founder"), newSigner(), life())
+	if err != nil {
+		return nil, nil, err
+	}
+	// The follower is a real member whose private key material we retain so it
+	// can join from the Welcome and subsequently apply commits.
+	followerSigner := newSigner()
+	followerKP, followerInit, followerLeaf, err := group.NewKeyPackage(s, cred("follower"), followerSigner, life())
+	if err != nil {
+		return nil, nil, err
+	}
+	followerKPMsg, err := group.EncodeKeyPackageMessage(followerKP)
+	if err != nil {
+		return nil, nil, err
+	}
+	adds := make([]group.Proposal, 0, M-1)
+	adds = append(adds, group.ProposeAdd(followerKP))
+	for i := 2; i < M; i++ { // M-2 filler members (private material discarded)
+		adds = append(adds, group.ProposeAdd(keyPackage(s, fmt.Sprintf("m-%d", i))))
+	}
+	_, welcome, err := committer.Commit(group.CommitOptions{ByValue: adds})
+	if err != nil {
+		return nil, nil, err
+	}
+	follower, err = group.JoinFromWelcome(s, welcome, group.JoinOptions{
+		KeyPackage: followerKPMsg, InitPriv: followerInit, EncryptionPriv: followerLeaf,
+		Signer: followerSigner, ExternalPSKs: map[string][]byte{},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return committer, follower, nil
+}
+
+// BenchmarkApply measures cpu_per_apply(M): a member processing one empty Update
+// commit. Committer and follower are genuine members of the same group and are
+// kept in lockstep — the committer produces one commit (untimed) and the
+// follower applies it (timed) each iteration, so both advance together and every
+// iteration is a real TreeKEM apply. Machine-dependent; reporting only.
+func BenchmarkApply(b *testing.B) {
+	for name, s := range benchSuites(b) {
+		for _, M := range []int{2, 8, 32, 128} {
+			b.Run(fmt.Sprintf("%s/M=%d", name, M), func(b *testing.B) {
+				committer, follower, err := buildCommitterFollower(s, M)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					b.StopTimer()
+					commit, _, err := committer.Commit(group.CommitOptions{})
+					if err != nil {
+						b.Fatal(err)
+					}
+					b.StartTimer()
+					if err := follower.ProcessCommit(nil, commit); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }

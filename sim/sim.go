@@ -451,6 +451,9 @@ func Run(sc Scenario, seed int64) Result {
 		if !ok {
 			break
 		}
+		if e.At > metrics.Horizon {
+			metrics.Horizon = e.At
+		}
 		trace = append(trace, w.dispatch(e))
 		if s.Now() >= w.settleDeadline && !w.faultsLifted {
 			w.faults.liftAll()

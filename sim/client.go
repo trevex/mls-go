@@ -75,17 +75,17 @@ func newVNIState() *vniState {
 // VNI (one per replica channel saVNI(vni,r)); every host is a member of BOTH
 // replicas and installs BOTH replicas' SAs (rev 5 §0).
 type Client struct {
-	id          ActorID
-	suite       cipher.Suite
-	signer      crypto.Signer
-	identity    string
-	vnis        map[uint32]*vniState // keyed by channel = saVNI(vni, r)
-	bus         *Bus
-	sched       *Scheduler
-	dir         *kpDirectory
-	dsIDs       []ActorID // dsIDs[r] = reflector R_r
-	metrics     *Metrics
-	checker     *InvariantChecker
+	id                ActorID
+	suite             cipher.Suite
+	signer            crypto.Signer
+	identity          string
+	vnis              map[uint32]*vniState // keyed by channel = saVNI(vni, r)
+	bus               *Bus
+	sched             *Scheduler
+	dir               *kpDirectory
+	dsIDs             []ActorID // dsIDs[r] = reflector R_r
+	metrics           *Metrics
+	checker           *InvariantChecker
 	W                 int  // SA-overlap depth (make-before-break window)
 	mbbDisabled       bool // negative control: W=0 + no sender-lag
 	encryptHandshakes bool // EncryptedChurn scenario: member handshakes are PrivateMessage
@@ -185,6 +185,7 @@ func (c *Client) reconcile(ch uint32, desired [][]byte) {
 		return
 	}
 	c.cacheCurrentSA(ch)
+	c.pruneDepartedPeers(ch)
 	base := st.ctrl.Epoch() - 1
 	c.recordHead(ch, base, res.CommitMsg)
 	c.sendCommit(ch, base, res.CommitMsg)
@@ -246,6 +247,7 @@ func (c *Client) onDeliver(env Envelope) {
 }
 
 func (c *Client) onCommit(env Envelope) {
+	c.metrics.CommitDeliveries++
 	st := c.vnis[env.VNI]
 	if st == nil || !st.joined {
 		return
@@ -267,6 +269,9 @@ func (c *Client) onCommit(env Envelope) {
 	case err == nil:
 		c.cacheCurrentSA(env.VNI)
 		c.initPeerEpochForNewMembers(env.VNI, before)
+		c.pruneDepartedPeers(env.VNI)
+		c.metrics.CommitsApplied++
+		c.metrics.commitConverged(env.VNI, st.ctrl.Epoch(), c.sched.Now())
 	case isSelfRemoved(err):
 		c.leaveVNI(env.VNI)
 	}
@@ -352,6 +357,9 @@ func (c *Client) onLogReply(env Envelope) {
 		if err := st.ctrl.HandleCommit(r.Bytes); err == nil {
 			c.cacheCurrentSA(env.VNI)
 			c.initPeerEpochForNewMembers(env.VNI, before)
+			c.pruneDepartedPeers(env.VNI)
+			c.metrics.CommitsApplied++
+			c.metrics.commitConverged(env.VNI, st.ctrl.Epoch(), c.sched.Now())
 		} else if isSelfRemoved(err) {
 			c.leaveVNI(env.VNI)
 			return
@@ -375,6 +383,8 @@ func (c *Client) sendCommit(ch uint32, base uint64, msg []byte) {
 		Hash:    contentHash(msg),
 	})
 	c.metrics.commitFanout(len(msg), 1)
+	c.metrics.CommitsIssued++
+	c.metrics.commitIssued(ch, base+1, c.sched.Now())
 }
 
 func (c *Client) sendWelcome(ch uint32, welcome []byte, added [][]byte) {
@@ -484,6 +494,26 @@ func (c *Client) initPeerEpochForNewMembers(ch uint32, beforeLeaves map[string]b
 			if _, exists := st.peerEpoch[aid]; !exists {
 				st.peerEpoch[aid] = cur
 			}
+		}
+	}
+}
+
+// pruneDepartedPeers drops peerEpoch/heard entries for actors no longer in this
+// replica's active member set (e.g. removed by a Remove commit). This is the
+// symmetric counterpart to initPeerEpochForNewMembers: without it, a departed
+// member's stale (frozen) epoch would pin sendEpoch — the min over peerEpoch —
+// below the make-before-break window, so live receivers that trimmed that SA
+// could no longer decrypt (inv. 2 packet loss).
+func (c *Client) pruneDepartedPeers(ch uint32) {
+	st := c.vnis[ch]
+	if st == nil || !st.joined {
+		return
+	}
+	members := c.replicaMembers(ch)
+	for a := range st.peerEpoch {
+		if !members[a] {
+			delete(st.peerEpoch, a)
+			delete(st.heard, a)
 		}
 	}
 }

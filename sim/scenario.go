@@ -109,6 +109,37 @@ func EncryptedChurn() Scenario {
 	return s
 }
 
+// migrationPlan models VM migration across hosts: for each VNI, hosts 1 and 2
+// initially hold a VM (join), then each VM migrates to a new host (the old host
+// leaves, a spare host joins). The founder (client 0) is the committer and never
+// migrates. Requires clients >= 5 (0 founder, 1-2 initial, 3-4 destinations).
+func migrationPlan(vnis int) []ChurnOp {
+	var ops []ChurnOp
+	for v := 0; v < vnis; v++ {
+		vv := uint32(v)
+		// initial placement
+		ops = append(ops, ChurnOp{Join: true, Client: 1, VNI: vv})
+		ops = append(ops, ChurnOp{Join: true, Client: 2, VNI: vv})
+	}
+	for v := 0; v < vnis; v++ {
+		vv := uint32(v)
+		// migrate host1's VM -> host3, host2's VM -> host4 (leave src, join dst)
+		ops = append(ops, ChurnOp{Join: false, Client: 1, VNI: vv})
+		ops = append(ops, ChurnOp{Join: true, Client: 3, VNI: vv})
+		ops = append(ops, ChurnOp{Join: false, Client: 2, VNI: vv})
+		ops = append(ops, ChurnOp{Join: true, Client: 4, VNI: vv})
+	}
+	return ops
+}
+
+// MigrationChurn exercises leave + join membership churn modeling VM migration
+// across hosts. Asserts the dual-redundancy invariants still hold under removes.
+func MigrationChurn() Scenario {
+	s := base("migration_churn", 5, 2)
+	s.Churn = migrationPlan(2)
+	return s
+}
+
 // NegativeControl is the data-plane negative control: ONE replica, W=0, no
 // sender-lag. A rekey under churn MUST produce undecryptable packets (inv. 2
 // fails), proving the zero-loss checker has teeth.
@@ -122,13 +153,16 @@ func NegativeControl() Scenario {
 }
 
 // All returns the property-tested suite in deterministic order.
+// migration_churn is intentionally excluded pending soak: it is the first
+// leave/remove scenario and is validated by its own test (migration_test.go);
+// promote it here in a follow-up once it has soaked.
 func All() []Scenario {
 	return []Scenario{Nominal(), Drops(), DSDown(), PartitionRecover(), BothRekey(), EncryptedChurn()}
 }
 
 // ByName looks up a scenario for the CLI.
 func ByName(name string) (Scenario, bool) {
-	for _, s := range append(All(), NegativeControl()) {
+	for _, s := range append(All(), NegativeControl(), MigrationChurn()) {
 		if s.Name == name {
 			return s, true
 		}

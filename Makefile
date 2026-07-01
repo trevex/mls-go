@@ -17,7 +17,7 @@ NIX_E2E ?= nix develop .\#e2e -c
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test kat race vet fmt fmt-check lint conformance generate check-zero-dep e2e-openmls sim clean
+.PHONY: help test kat race vet fmt fmt-check lint conformance generate check-zero-dep e2e-openmls sim clean bench scalebench
 
 help: ## List available targets
 	@echo "mls-go — make targets (all run inside the Nix dev shell):"
@@ -34,6 +34,13 @@ test: ## Run the root module test suite (go test ./...)
 sim: ## Run the MetalNet dual-redundancy simulation suite (5 scenarios + CLI smoke)
 	$(NIX) go test ./sim/...
 	$(NIX) go run ./cmd/metalsim -scenario all
+
+bench: ## Run the Tier-1 MLS crypto micro-benchmarks (commit/apply, all suites)
+	$(NIX) go test ./bench/ -run '^$$' -bench . -benchmem
+
+scalebench: ## Project the datacenter scaling sweep + verdict (classical + X-Wing)
+	$(NIX) go run ./cmd/scalebench -suite 0x0001
+	$(NIX) go run ./cmd/scalebench -suite 0xF001
 
 kat: ## Run the official MLS Known-Answer Tests (RFC 9420 test vectors)
 	$(NIX) go test ./mls/... -run KAT -v

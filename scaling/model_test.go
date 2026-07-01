@@ -56,3 +56,32 @@ func TestSaturationFlag(t *testing.T) {
 		t.Fatal("expected ReflectorSaturated=false under huge budget")
 	}
 }
+
+func TestIKEv2EstablishIsQuadraticInM(t *testing.T) {
+	p := baseParams()
+	p.M = 10
+	a := IKEv2Project(p).EstablishHandshakes
+	p.M = 20
+	b := IKEv2Project(p).EstablishHandshakes
+	// M-mesh is V*M*(M-1)/2; doubling M ~quadruples per-VNI handshakes.
+	if b <= a*3.5 {
+		t.Fatalf("IKEv2 establish not ~quadratic in M: M=10 -> %v, M=20 -> %v", a, b)
+	}
+}
+
+func TestIKEv2SteadyScalesWithChurnAndFanout(t *testing.T) {
+	p := baseParams()
+	got := IKEv2Project(p).HandshakesPerSecSteady
+	want := float64(p.V) * p.LambdaMove * float64(p.M-1)
+	if got != want {
+		t.Fatalf("IKEv2 steady = %v, want %v", got, want)
+	}
+}
+
+func TestDataPlaneSACountParity(t *testing.T) {
+	// Data-plane SA count is topology-bound ⇒ identical for MLS and IKEv2.
+	p := baseParams()
+	if IKEv2Project(p).DataPlaneMemberVNIsPerHost != Project(p).Density {
+		t.Fatal("data-plane SA parity broken: IKEv2 and MLS must match (topology-bound)")
+	}
+}

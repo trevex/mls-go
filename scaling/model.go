@@ -57,3 +57,22 @@ func Project(p Params) Projection {
 		ReflectorSaturated:      p.FwdBudgetBytesPerSec > 0 && fwd > p.FwdBudgetBytesPerSec,
 	}
 }
+
+// IKEv2Projection is the analytical pairwise-IKEv2 cost at one envelope point.
+type IKEv2Projection struct {
+	EstablishHandshakes        float64 // one-time full mesh: V * M*(M-1)/2
+	HandshakesPerSecSteady     float64 // per migration a member re-handshakes M-1 peers: V*λ*(M-1)
+	DataPlaneMemberVNIsPerHost float64 // topology-bound; equals MLS Density (parity)
+}
+
+// IKEv2Project costs the same (H,V,M,λ) point under a pairwise-IKEv2 model.
+// Key-agreement is O(M^2) to establish and O(M) per membership change (each a
+// full round-trip handshake with half-open state), versus MLS's one fanned-out
+// commit with O(log M) crypto. The data-plane SA count is identical to MLS.
+func IKEv2Project(p Params) IKEv2Projection {
+	return IKEv2Projection{
+		EstablishHandshakes:        float64(p.V) * float64(p.M) * float64(p.M-1) / 2,
+		HandshakesPerSecSteady:     float64(p.V) * p.LambdaMove * float64(p.M-1),
+		DataPlaneMemberVNIsPerHost: float64(p.V) * float64(p.M) / float64(p.H),
+	}
+}

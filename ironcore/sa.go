@@ -109,6 +109,41 @@ func (sa SA) SenderSalt(leafIndex uint32) ([]byte, error) {
 	return salt, nil
 }
 
+// InboundSA is one per-sender ESP inbound security association: the data plane
+// installs one of these per active member leaf so every sender occupies its own
+// SPI and hence its own RFC 4303 anti-replay window.
+type InboundSA struct {
+	Leaf uint32 // sender's MLS leaf index
+	SPI  uint32 // sender's per-sender SPI
+	Key  []byte // shared K_group (32-byte AES-256-GCM key)
+	Salt []byte // sender's 4-byte GCM nonce salt
+}
+
+// InboundSAs returns one InboundSA per leaf in leaves (typically the group's
+// active member leaves). It returns an error if two leaves map to the same SPI
+// (a birthday collision in the 23-bit SPI space); the caller resolves this by
+// forcing a rekey, which reshuffles every SPI.
+func (sa SA) InboundSAs(leaves []uint32) ([]InboundSA, error) {
+	out := make([]InboundSA, 0, len(leaves))
+	seen := make(map[uint32]uint32, len(leaves)) // spi -> leaf
+	for _, leaf := range leaves {
+		spi, err := sa.SenderSPI(leaf)
+		if err != nil {
+			return nil, err
+		}
+		if other, dup := seen[spi]; dup {
+			return nil, fmt.Errorf("ironcore: SPI collision %#x between leaves %d and %d (rekey to resolve)", spi, other, leaf)
+		}
+		seen[spi] = leaf
+		salt, err := sa.SenderSalt(leaf)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, InboundSA{Leaf: leaf, SPI: spi, Key: sa.Key, Salt: salt})
+	}
+	return out, nil
+}
+
 // DeriveSAKeys derives the IronCore ESP SA for the given group at its current
 // epoch (design spec §10.4). All members of the VNI group obtain byte-identical
 // Key and SPI; OwnSalt gives this member's disjoint GCM nonce space.

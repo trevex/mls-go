@@ -148,6 +148,20 @@ func (c *Controller) CurrentSA() (SA, error) {
 	return c.curSA, nil
 }
 
+// InboundSAs returns the per-sender inbound SAs for the current epoch — one per
+// active member leaf. The data plane installs these so each sender has its own
+// anti-replay window (design spec 2026-07-03-per-sender-spi).
+func (c *Controller) InboundSAs() ([]InboundSA, error) {
+	if c.g == nil {
+		return nil, fmt.Errorf("ironcore: no group")
+	}
+	sa, err := c.CurrentSA()
+	if err != nil {
+		return nil, err
+	}
+	return sa.InboundSAs(c.g.ActiveLeaves())
+}
+
 // PreviousSA returns the immediately-prior epoch's SA for the make-before-break
 // overlap window (design spec §10.4). ok=false only at the very first epoch or
 // before any join.

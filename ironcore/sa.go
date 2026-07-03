@@ -16,6 +16,12 @@ const (
 
 // SA is one IronCore ESP security association derived from an MLS epoch
 // (design spec §10.4). It feeds the dpservice/metalnet XFRM data plane.
+//
+// Each member sends under its own per-sender SPI (OwnSPI / SenderSPI(leaf)) so
+// every sender occupies a distinct RFC 4303 anti-replay window; a receiver
+// installs one inbound SA per sender (InboundSAs). The group-wide SPI field is
+// retained for the single-shared-SPI case, but per-sender data planes must not
+// use it for anti-replay (all senders would share one window and collide).
 type SA struct {
 	VNI      uint32 // the VNI this SA protects
 	Epoch    uint64 // the MLS epoch it was derived from

@@ -468,6 +468,9 @@ func Run(sc Scenario, seed int64) Result {
 	if metrics.PlaintextHandshakeExposures > 0 {
 		r.InvariantsHeld = false
 	}
+	if metrics.ReplayDrops > 0 {
+		r.InvariantsHeld = false
+	}
 	r.Trace = trace
 	return r
 }

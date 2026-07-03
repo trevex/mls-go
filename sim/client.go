@@ -35,6 +35,37 @@ func (optimisticOrdering) AcceptCommit(_ context.Context, _ group.GroupID, _ uin
 	return true, nil
 }
 
+// replayWin is an RFC 4303 anti-replay sliding window (size replayWindow) over a
+// single inbound SPI's sequence stream. accept reports whether seq is fresh
+// (advancing the window and recording it) or a replay/too-old duplicate.
+const replayWindow = 64
+
+type replayWin struct {
+	high uint64
+	seen map[uint64]bool
+}
+
+func newReplayWin() *replayWin { return &replayWin{seen: map[uint64]bool{}} }
+
+func (w *replayWin) accept(seq uint64) bool {
+	if w.high >= replayWindow && seq <= w.high-replayWindow {
+		return false // below the window ⇒ too old
+	}
+	if w.seen[seq] {
+		return false // duplicate
+	}
+	if seq > w.high {
+		w.high = seq
+	}
+	w.seen[seq] = true
+	for s := range w.seen { // prune entries below the window (order-independent)
+		if w.high >= replayWindow && s < w.high-replayWindow {
+			delete(w.seen, s)
+		}
+	}
+	return true
+}
+
 // vniState is one client's state for one replica channel (one MLS group).
 type vniState struct {
 	ctrl      *ironcore.Controller
@@ -57,6 +88,10 @@ type vniState struct {
 	pendingWelcome map[string][]byte // joiner identity -> Welcome bytes not yet joined
 
 	catchupReqs map[uint64]int
+
+	sendSeq map[uint64]uint64          // epoch -> next outbound ESP seq (this sender)
+	inSPIs  map[uint64]map[uint32]bool // epoch -> set of inbound SPIs we hold
+	replay  map[uint32]*replayWin      // inbound SPI -> anti-replay window
 }
 
 func newVNIState() *vniState {
@@ -68,6 +103,9 @@ func newVNIState() *vniState {
 		confirmed:      map[uint64]bool{},
 		pendingWelcome: map[string][]byte{},
 		catchupReqs:    map[uint64]int{},
+		sendSeq:        map[uint64]uint64{},
+		inSPIs:         map[uint64]map[uint32]bool{},
+		replay:         map[uint32]*replayWin{},
 	}
 }
 
@@ -89,6 +127,17 @@ type Client struct {
 	W                 int  // SA-overlap depth (make-before-break window)
 	mbbDisabled       bool // negative control: W=0 + no sender-lag
 	encryptHandshakes bool // EncryptedChurn scenario: member handshakes are PrivateMessage
+	sharedSPIReplay   bool // negative control: stamp the group SPI so all senders share one window
+}
+
+// sendSPI returns the SPI this client stamps on outbound data. Per-sender by
+// default (each sender its own window); the shared-SPI negative control overrides
+// this to the group SPI.
+func (c *Client) sendSPI(sa ironcore.SA) uint32 {
+	if c.sharedSPIReplay {
+		return sa.SPI
+	}
+	return sa.OwnSPI
 }
 
 func newClient(id ActorID, suite cipher.Suite, signer crypto.Signer, identity string,
@@ -530,6 +579,15 @@ func (c *Client) cacheCurrentSA(ch uint32) {
 		return
 	}
 	st.saCache[sa.Epoch] = sa
+	spis := map[uint32]bool{sa.SPI: true} // retained group SPI (used by the negative control)
+	if st.ctrl.Group() != nil {
+		for _, leaf := range st.ctrl.Group().ActiveLeaves() {
+			if s, err := sa.SenderSPI(leaf); err == nil {
+				spis[s] = true
+			}
+		}
+	}
+	st.inSPIs[sa.Epoch] = spis
 	c.trimSAs(ch)
 	c.metrics.observeOverlap(len(st.saCache))
 }
@@ -542,6 +600,7 @@ func (c *Client) trimSAs(ch uint32) {
 	for _, e := range sortedEpochs(st.saCache) {
 		if cur >= w && e < cur-w {
 			delete(st.saCache, e)
+			delete(st.inSPIs, e)
 		}
 	}
 }
@@ -596,7 +655,7 @@ func (c *Client) sendData(tenant uint32) {
 		}
 		se := c.sendEpoch(ch)
 		sa, ok := st.saCache[se]
-		cd := &dataCand{ch: ch, se: se, spi: sa.SPI, ok: ok,
+		cd := &dataCand{ch: ch, se: se, spi: c.sendSPI(sa), ok: ok,
 			members: c.replicaMembers(ch), heard: st.heard}
 		cands[r] = cd
 		for a := range cd.members {
@@ -625,8 +684,10 @@ func (c *Client) sendToReceiver(tenant uint32, rcv ActorID, cands []*dataCand) {
 			}
 			st := c.vnis[cd.ch]
 			c.metrics.observeSendLag(st.ctrl.Epoch() - cd.se)
+			seq := st.sendSeq[cd.se]
+			st.sendSeq[cd.se] = seq + 1
 			c.bus.Publish(Envelope{VNI: cd.ch, Type: MsgData, Src: c.id, Dst: rcv,
-				Base: cd.se, SPI: cd.spi})
+				Base: cd.se, SPI: cd.spi, DataSeq: seq})
 			c.metrics.DataSent++
 			return
 		}
@@ -643,13 +704,30 @@ func (c *Client) onData(env Envelope) {
 	if env.Base < st.joinEpoch {
 		return // pre-join epoch: we never held that key (forward secrecy, not a loss)
 	}
+	held := false
 	for _, e := range sortedEpochs(st.saCache) {
-		if st.saCache[e].SPI == env.SPI {
-			c.metrics.DataDecryptable++
-			return
+		if e < st.joinEpoch {
+			continue
+		}
+		if st.inSPIs[e] != nil && st.inSPIs[e][env.SPI] {
+			held = true
+			break
 		}
 	}
-	c.checker.packetLoss(uint64(env.VNI), env.Base, st.ctrl.Epoch(), c.sched.Now())
+	if !held {
+		c.checker.packetLoss(uint64(env.VNI), env.Base, st.ctrl.Epoch(), c.sched.Now())
+		return
+	}
+	win := st.replay[env.SPI]
+	if win == nil {
+		win = newReplayWin()
+		st.replay[env.SPI] = win
+	}
+	if win.accept(env.DataSeq) {
+		c.metrics.DataDecryptable++
+	} else {
+		c.metrics.ReplayDrops++
+	}
 }
 
 // emitHeartbeat advertises our current epoch on channel ch and (committer only)

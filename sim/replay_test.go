@@ -16,3 +16,15 @@ func TestPerSenderNoReplayDrops(t *testing.T) {
 		t.Fatalf("invariants failed: %s", failureSummary(r))
 	}
 }
+
+// Negative control: force all senders onto the single group SPI (one shared
+// window). Concurrent senders then collide on sequence numbers, so the receiver
+// MUST drop some legitimate packets as replays — proving the anti-replay checker
+// has teeth. This is an EXPECTED failure mode, so InvariantsHeld may be false;
+// we assert the drops occurred.
+func TestSharedSPIProducesReplayDrops(t *testing.T) {
+	r := Run(SharedSPIReplayControl(), 1)
+	if r.Metrics.ReplayDrops == 0 {
+		t.Fatal("shared-SPI control produced 0 replay drops — checker has no teeth")
+	}
+}

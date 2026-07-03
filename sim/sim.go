@@ -431,6 +431,7 @@ func Run(sc Scenario, seed int64) Result {
 		clients[i] = newClient(ActorID(i), suite, signer, id, bus, s, dir, dsIDs, metrics, checker, sc.W)
 		clients[i].mbbDisabled = sc.MBBDisabled
 		clients[i].encryptHandshakes = sc.EncryptHandshakes
+		clients[i].sharedSPIReplay = sc.SharedSPIReplay
 	}
 	dss := []*DS{newDS(dsIDs[0], 0, bus, faults), newDS(dsIDs[1], 1, bus, faults)}
 	for _, ds := range dss {
@@ -468,7 +469,7 @@ func Run(sc Scenario, seed int64) Result {
 	if metrics.PlaintextHandshakeExposures > 0 {
 		r.InvariantsHeld = false
 	}
-	if metrics.ReplayDrops > 0 {
+	if !sc.SharedSPIReplay && metrics.ReplayDrops > 0 {
 		r.InvariantsHeld = false
 	}
 	r.Trace = trace

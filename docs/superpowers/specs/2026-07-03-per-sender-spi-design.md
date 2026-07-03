@@ -29,7 +29,8 @@ distinct SPI+salt per sender leaf), each with an independent RFC 4303 window.
 ### Design decisions
 
 1. **SPI derivation gains the leaf (additive — `SA.SPI` is unchanged).**
-   `SenderSPI(leaf) = ExpandWithLabel(K_group, "esp-spi", VNI‖epoch‖leaf, 4)`,
+   `SenderSPI(leaf) = ExpandWithLabel(K_group, "esp-spi-sender", VNI‖epoch‖leaf, 4)`
+   (label distinct from the group SPI's `"esp-spi"` — domain separation),
    then **low byte := epoch low byte** (retains make-before-break overlap demux
    across the W window) and **MSB forced set** (keeps SPI > 255, RFC 4303 §2.1).
    New `SA.OwnSPI = SenderSPI(OwnLeaf)` is this member's outbound SPI. The

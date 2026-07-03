@@ -22,6 +22,7 @@ type Metrics struct {
 	CommitResends               int // committer resends of an unconfirmed head commit (drop recovery)
 	DataSent                    int
 	DataDecryptable             int
+	ReplayDrops                 int
 	CommitMsgs                  int
 	CommitBytes                 int
 	MaxOverlap                  int    // max |saCache| observed (the W actually needed +1)
@@ -113,6 +114,7 @@ func (m *Metrics) Report() string {
 	_, _ = fmt.Fprintf(w, "ctrl-dropped\t%d\n", m.CtrlDropped)
 	_, _ = fmt.Fprintf(w, "data-sent\t%d\n", m.DataSent)
 	_, _ = fmt.Fprintf(w, "data-decryptable\t%d\n", m.DataDecryptable)
+	_, _ = fmt.Fprintf(w, "replay-drops\t%d\n", m.ReplayDrops)
 	_, _ = fmt.Fprintf(w, "data-dropped(transport)\t%d\n", m.DataDropped)
 	_, _ = fmt.Fprintf(w, "catchup-requests\t%d\n", m.CatchupRequests)
 	_, _ = fmt.Fprintf(w, "log-retransmits\t%d\n", m.LogRetransmits)

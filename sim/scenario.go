@@ -8,18 +8,19 @@ import (
 
 // Scenario is a built-in simulation profile (dual-group pure redundancy, rev 5 §0).
 type Scenario struct {
-	Name          string
-	Clients       int
-	VNIs          int
-	Suite         cipher.CipherSuite
-	W             int // per-replica SA-overlap depth (make-before-break window)
-	Faults        FaultConfig
-	Partitions    []scriptedPartition
-	DSDowns       []scriptedDSDown
-	Churn         []ChurnOp
-	SettleRounds  uint64
-	MBBDisabled   bool // negative control: W=0 + no sender-lag
-	SingleReplica bool // negative control: model only ONE replica (no redundancy)
+	Name            string
+	Clients         int
+	VNIs            int
+	Suite           cipher.CipherSuite
+	W               int // per-replica SA-overlap depth (make-before-break window)
+	Faults          FaultConfig
+	Partitions      []scriptedPartition
+	DSDowns         []scriptedDSDown
+	Churn           []ChurnOp
+	SettleRounds    uint64
+	MBBDisabled     bool // negative control: W=0 + no sender-lag
+	SingleReplica   bool // negative control: model only ONE replica (no redundancy)
+	SharedSPIReplay bool // negative control: senders use the single group SPI (shared anti-replay window)
 	// EncryptHandshakes makes every VNI in this scenario frame member handshakes
 	// as PrivateMessage (maps to ironcore HandshakePrivacy). Default false: the
 	// other scenarios opt out to HandshakePlaintext explicitly (see client.go) —
@@ -152,6 +153,16 @@ func NegativeControl() Scenario {
 	return s
 }
 
+// SharedSPIReplayControl is the anti-replay negative control: multiple senders
+// share one group SPI ⇒ one shared replay window ⇒ concurrent senders collide
+// and the receiver drops legitimate packets as replays (ReplayDrops > 0).
+func SharedSPIReplayControl() Scenario {
+	s := base("shared_spi_replay", 5, 2)
+	s.Churn = churnPlan(5, 2)
+	s.SharedSPIReplay = true
+	return s
+}
+
 // All returns the property-tested suite in deterministic order.
 // migration_churn is intentionally excluded pending soak: it is the first
 // leave/remove scenario and is validated by its own test (migration_test.go);
@@ -162,7 +173,7 @@ func All() []Scenario {
 
 // ByName looks up a scenario for the CLI.
 func ByName(name string) (Scenario, bool) {
-	for _, s := range append(All(), NegativeControl(), MigrationChurn()) {
+	for _, s := range append(All(), NegativeControl(), MigrationChurn(), SharedSPIReplayControl()) {
 		if s.Name == name {
 			return s, true
 		}

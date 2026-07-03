@@ -217,6 +217,7 @@ The RR/sequencer is a **pure ordering authority**: it is **not** an MLS group me
 ### 10.4 ESP SA lifecycle (exporter → data plane)
 - Per epoch *e*: `K_group = MLS-Exporter("ironcore-esp", context = VNI‖epoch, L)`; `SPI = f(VNI, e)` (epoch encoded in the SPI so receivers disambiguate overlapping epochs).
 - **GCM nonce safety (critical):** the design uses a **group key** in a connectionless/route-based model (à la WireGuard cryptokey routing), so **every sender must occupy a disjoint nonce space** — nonce reuse under AES-GCM is catastrophic. Per-sender nonce salt = `HKDF(K_group, "esp-sender" ‖ sender_leaf_index)`; the ESP IV continues to come from the per-SA sequence number. This guarantees no two senders ever share a `(key, nonce)`.
+- **Multi-sender anti-replay (per-sender SPI):** a group key would otherwise force a single shared ESP anti-replay window in which concurrent senders collide (all start at sequence 1) and are dropped as replays. Each sender instead derives its own SPI from its MLS leaf index (`SenderSPI(leaf)`), so it gets its own RFC 4303 window; a receiver installs one inbound SA per sender (`InboundSAs`, O(M) per VNI — the GDOI-style group SA). SPI uniqueness is probabilistic (collisions detected and resolved by a rekey); the GCM nonce salt above stays injective.
 - **Make-before-break:** install epoch *e+1* SAs **before** tearing down epoch *e*; overlap window ≥ max propagation + clock skew. Aligns with the enhancement proposal's existing "new SPI per epoch + make-before-break" mechanics — MLS simply supplies the key material via the exporter instead of HKDF-over-announced-ephemeral-keys.
 - **Rotation triggers:** any epoch change (membership churn) and the periodic-rekey timer (§10.3).
 
@@ -233,7 +234,7 @@ The RR/sequencer is a **pure ordering authority**: it is **not** an MLS group me
 | Threat (from #38) | Mitigation here |
 |---|---|
 | Passive eavesdropping | AEAD ESP keyed by per-epoch MLS exporter; **PQ-safe confidentiality** via hybrid KEM. |
-| Active MITM / injection / replay | MLS content auth (§6.1) + ESP anti-replay; **mTLS + leaf-credential binding** (§8). |
+| Active MITM / injection / replay | MLS content auth (§6.1) + **per-sender-SPI** ESP anti-replay (one RFC 4303 window per sender leaf); **mTLS + leaf-credential binding** (§8). |
 | Malicious co-tenant | **Per-VNI group isolation** — distinct group, distinct exporter, distinct SAs. |
 | Compromised host / rogue control plane | **PCS** via periodic + on-churn Commits (§10.3); DS is untrusted for confidentiality (§10.2); **provable ordering** (§5) prevents a rogue/partitioned DS from forking members undetectably. |
 

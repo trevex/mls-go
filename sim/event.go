@@ -48,6 +48,7 @@ type Envelope struct {
 	Base    uint64         // base epoch a commit was produced FROM (commit), or data/heartbeat epoch
 	Payload []byte         // real MLS/ironcore bytes (commit/welcome) or nil
 	SPI     uint32         // for MsgData: the sender's send-SA SPI
+	DataSeq uint64         // for MsgData: the sender's per-sender ESP sequence number
 	Records []CommitRecord // for MsgLogReply
 	Joiner  string         // for MsgWelcome: identity the Welcome is addressed to
 	Hash    string         // content hash for dedup (set by sender)

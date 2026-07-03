@@ -46,7 +46,8 @@ func TestDeterminism(t *testing.T) {
 	type deterministicMetrics struct {
 		Delivered, Reflected, CtrlDropped, DataDropped, Blocked int
 		CatchupRequests, LogRetransmits                         int
-		DataSent, DataDecryptable, CommitMsgs, CommitBytes      int
+		DataSent, DataDecryptable, ReplayDrops                  int
+		CommitMsgs, CommitBytes                                 int
 		MaxOverlap                                              int
 		MaxSendLag                                              uint64
 		PlaintextHandshakeExposures                             int
@@ -57,7 +58,7 @@ func TestDeterminism(t *testing.T) {
 		return deterministicMetrics{
 			m.Delivered, m.Reflected, m.CtrlDropped, m.DataDropped, m.Blocked,
 			m.CatchupRequests, m.LogRetransmits,
-			m.DataSent, m.DataDecryptable, m.CommitMsgs, m.CommitBytes,
+			m.DataSent, m.DataDecryptable, m.ReplayDrops, m.CommitMsgs, m.CommitBytes,
 			m.MaxOverlap, m.MaxSendLag,
 			m.PlaintextHandshakeExposures,
 			m.CommitsIssued, m.CommitDeliveries, m.CommitsApplied,

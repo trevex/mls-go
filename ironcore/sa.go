@@ -19,10 +19,11 @@ const (
 type SA struct {
 	VNI      uint32 // the VNI this SA protects
 	Epoch    uint64 // the MLS epoch it was derived from
-	SPI      uint32 // ESP SPI (epoch-encoded; > 255)
+	SPI      uint32 // group ESP SPI (leaf-independent; per-sender data planes use OwnSPI/SenderSPI)
 	Key      []byte // K_group: 32-byte AES-256-GCM group key
 	OwnLeaf  uint32 // this member's leaf index
 	OwnSalt  []byte // 4-byte GCM nonce salt for this member's own sender nonce space
+	OwnSPI   uint32 // this member's own outbound ESP SPI = SenderSPI(OwnLeaf)
 	saltMask []byte // per-epoch 4-byte mask: SenderSalt(leaf) = saltMask XOR BE32(leaf)
 	suite    cipher.Suite
 }
@@ -50,6 +51,42 @@ func deriveSPI(suite cipher.Suite, kGroup []byte, vni uint32, epoch uint64) (uin
 	spi = (spi &^ 0xFF) | uint32(uint8(epoch)) // epoch low byte → disambiguates overlapping epochs
 	spi |= 0x80000000                          // keep SPI > 255 (RFC 4303 §2.1 reserved range)
 	return spi, nil
+}
+
+// spiContext encodes VNI‖epoch‖leaf as the 16-byte context for a per-sender SPI.
+func spiContext(vni uint32, epoch uint64, leaf uint32) []byte {
+	b := make([]byte, 16)
+	binary.BigEndian.PutUint32(b[0:4], vni)
+	binary.BigEndian.PutUint64(b[4:12], epoch)
+	binary.BigEndian.PutUint32(b[12:16], leaf)
+	return b
+}
+
+// deriveSenderSPI derives sender `leaf`'s 32-bit ESP SPI from K_group. Like the
+// group SPI it embeds the epoch low byte (make-before-break overlap demux) and
+// forces the MSB (keep SPI > 255, RFC 4303 §2.1). The remaining 23 bits are a
+// function of the leaf, so distinct senders get distinct SPIs w.h.p. (birthday
+// bound ~ M^2/2^24 per epoch — negligible for realistic M; collisions among
+// active members are detected in InboundSAs and resolved by a rekey).
+func deriveSenderSPI(suite cipher.Suite, kGroup []byte, vni uint32, epoch uint64, leaf uint32) (uint32, error) {
+	raw, err := suite.ExpandWithLabel(kGroup, "esp-spi-sender", spiContext(vni, epoch, leaf), 4)
+	if err != nil {
+		return 0, fmt.Errorf("ironcore: derive sender SPI: %w", err)
+	}
+	spi := binary.BigEndian.Uint32(raw)
+	spi = (spi &^ 0xFF) | uint32(uint8(epoch))
+	spi |= 0x80000000
+	return spi, nil
+}
+
+// SenderSPI returns the per-sender ESP SPI for sender leafIndex at this SA's
+// epoch. All members compute identical values (shared K_group), so a receiver
+// can install one inbound SA per sender keyed by this SPI.
+func (sa SA) SenderSPI(leafIndex uint32) (uint32, error) {
+	if len(sa.Key) == 0 {
+		return 0, fmt.Errorf("ironcore: SA key not initialized (use DeriveSAKeys)")
+	}
+	return deriveSenderSPI(sa.suite, sa.Key, sa.VNI, sa.Epoch, leafIndex)
 }
 
 // SenderSalt returns the 4-byte RFC 4106 AES-GCM-ESP nonce salt for sender
@@ -97,6 +134,9 @@ func DeriveSAKeys(g *group.Group, vni uint32) (SA, error) {
 		return SA{}, fmt.Errorf("ironcore: derive salt mask: %w", err)
 	}
 	if sa.OwnSalt, err = sa.SenderSalt(g.OwnLeaf()); err != nil {
+		return SA{}, err
+	}
+	if sa.OwnSPI, err = sa.SenderSPI(g.OwnLeaf()); err != nil {
 		return SA{}, err
 	}
 	return sa, nil

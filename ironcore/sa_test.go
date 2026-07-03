@@ -237,3 +237,65 @@ func TestDeriveSAKeys(t *testing.T) {
 		t.Fatalf("SPI mismatch after epoch++: alice=%d bob=%d carol=%d", saAlice2.SPI, saBob2.SPI, saCarol2.SPI)
 	}
 }
+
+func TestSenderSPIPerSender(t *testing.T) {
+	suite, ok := cipher.Lookup(cipher.XWING_AES256GCM_SHA256_Ed25519)
+	if !ok {
+		t.Skip("suite not registered")
+	}
+	const vni = uint32(0xF001)
+	alice, bob, carol := build3MemberGroup(t, suite, ironcore.GroupID(vni))
+	sa, err := ironcore.DeriveSAKeys(alice, vni)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spis := map[uint32]uint32{}
+	for _, leaf := range []uint32{0, 1, 2} {
+		s, err := sa.SenderSPI(leaf)
+		if err != nil {
+			t.Fatalf("SenderSPI(%d): %v", leaf, err)
+		}
+		if s <= 255 {
+			t.Fatalf("SenderSPI(%d)=%d not > 255", leaf, s)
+		}
+		if uint8(s) != uint8(sa.Epoch) {
+			t.Fatalf("SenderSPI(%d) low byte %d != epoch low byte %d", leaf, uint8(s), uint8(sa.Epoch))
+		}
+		spis[leaf] = s
+	}
+	if spis[0] == spis[1] || spis[0] == spis[2] || spis[1] == spis[2] {
+		t.Fatalf("SenderSPI not distinct across senders: %v", spis)
+	}
+	saBob, _ := ironcore.DeriveSAKeys(bob, vni)
+	saCarol, _ := ironcore.DeriveSAKeys(carol, vni)
+	for _, leaf := range []uint32{0, 1, 2} {
+		b, _ := saBob.SenderSPI(leaf)
+		c, _ := saCarol.SenderSPI(leaf)
+		if b != spis[leaf] || c != spis[leaf] {
+			t.Fatalf("SenderSPI(%d) disagrees across members: alice=%d bob=%d carol=%d", leaf, spis[leaf], b, c)
+		}
+	}
+	own, _ := sa.SenderSPI(sa.OwnLeaf)
+	if sa.OwnSPI != own {
+		t.Fatalf("OwnSPI=%d != SenderSPI(OwnLeaf)=%d", sa.OwnSPI, own)
+	}
+	if sa.SPI <= 255 {
+		t.Fatalf("group SPI %d not > 255", sa.SPI)
+	}
+}
+
+func TestSenderSPIChangesWithEpoch(t *testing.T) {
+	suite, _ := cipher.Lookup(cipher.XWING_AES256GCM_SHA256_Ed25519)
+	const vni = uint32(7)
+	alice, bob, carol := build3MemberGroup(t, suite, ironcore.GroupID(vni))
+	sa1, _ := ironcore.DeriveSAKeys(alice, vni)
+	s1, _ := sa1.SenderSPI(1)
+	commit, _, _ := alice.Commit(group.CommitOptions{})
+	_ = bob.ProcessCommit(nil, commit)
+	_ = carol.ProcessCommit(nil, commit)
+	sa2, _ := ironcore.DeriveSAKeys(alice, vni)
+	s2, _ := sa2.SenderSPI(1)
+	if s1 == s2 {
+		t.Fatal("SenderSPI did not change across epochs")
+	}
+}
